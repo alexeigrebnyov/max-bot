@@ -21,7 +21,7 @@ func Load() *Config {
 	}
 
 	if cfg.ApiBaseURL == "" {
-		cfg.ApiBaseURL = "https://platform-api.max.ru"
+		cfg.ApiBaseURL = os.Getenv("API_BASE_URL") // "https://platform-api.max.ru"
 	}
 
 	return cfg

@@ -1,5 +1,6 @@
 services:
   max-bot-service:
+    build: .
     image: max-bot-service:local
     container_name: max-bot-service
     restart: always
@@ -9,6 +10,7 @@ services:
       - BOT_TOKEN=${BOT_TOKEN:?}          # токен бота MAX
       - WEBHOOK_SECRET=${WEBHOOK_SECRET:?}# секрет для проверки webhook
       - WEBHOOK_URL=${WEBHOOK_URL:?}      # публичный URL https://.../webhook (для регистрации)
+      - API_BASE_URL=${API_BASE_URL:?}
     volumes:
       - ./data:/data                      # SQLite-хранилище контактов
     ports:

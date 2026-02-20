@@ -1,3 +1,5 @@
+// internal/storage/service.go
+
 package storage
 
 import (
@@ -8,7 +10,7 @@ import (
 	"os"
 	"path"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
 
 const (
@@ -31,7 +33,7 @@ func (srv *Service) Start(ctx context.Context) {
 		}
 	}
 
-	db, err := sql.Open("sqlite3", path.Join(directory, file))
+	db, err := sql.Open("sqlite", path.Join(directory, file))
 	if err != nil {
 		log.Fatal(err)
 	}

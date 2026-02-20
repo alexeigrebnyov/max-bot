@@ -7,6 +7,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log"
 	"net/http"
 	"strconv"
 
@@ -23,12 +25,6 @@ type Model struct {
 	Name       string // ник бота
 }
 
-// Вспомогательная структура для отправки сообщения в MAX
-type sendMessageRequest struct {
-	ChatID string `json:"chatId"`
-	Text   string `json:"text"`
-}
-
 type keyboardButton struct {
 	Type    string `json:"type"` // "message" или "request_contact"
 	Text    string `json:"text"`
@@ -41,8 +37,31 @@ type keyboard struct {
 
 // структура ответа /me (упрощённо)
 type botInfoResponse struct {
-	ID   int64  `json:"id"`
-	Nick string `json:"nick"`
+	UserID   int64  `json:"user_id"`
+	Username string `json:"username"`
+	Name     string `json:"name"`
+}
+
+type messagePeer struct {
+	UserID int64  `json:"user_id,omitempty"`
+	ChatID int64  `json:"chat_id,omitempty"`
+	Type   string `json:"type,omitempty"` // "dialog"
+}
+
+type messageContent struct {
+	Text string `json:"text"`
+}
+
+type sendMessageRequest struct {
+	Peer    messagePeer    `json:"peer"`
+	Content messageContent `json:"content"`
+	// Keyboard добавим во второй структуре
+}
+
+type sendMessageWithKeyboardRequest struct {
+	Peer     messagePeer    `json:"peer"`
+	Content  messageContent `json:"content"`
+	Keyboard keyboard       `json:"keyboard"`
 }
 
 func NewModel(contacts *tables.Contacts, cfg *config.Config) *Model {
@@ -52,6 +71,17 @@ func NewModel(contacts *tables.Contacts, cfg *config.Config) *Model {
 		token:      cfg.BotToken,
 		contacts:   contacts,
 	}
+}
+
+// структура под реальный формат /messages
+type sendMessageWithKbBody struct {
+	Text        string        `json:"text"`
+	Attachments []interface{} `json:"attachments,omitempty"`
+}
+
+type inlineKeyboardAttachment struct {
+	Type    string   `json:"type"`    // "inline_keyboard"
+	Payload keyboard `json:"payload"` // твоя структура keyboard
 }
 
 func (m *Model) SendMessage(ctx context.Context, chat string, thread int, text string, private bool) error {
@@ -65,9 +95,15 @@ func (m *Model) SendMessage(ctx context.Context, chat string, thread int, text s
 		}
 	}
 
-	body := sendMessageRequest{
-		ChatID: chat,
-		Text:   text,
+	chatID, err := strconv.ParseInt(chat, 10, 64)
+	if err != nil {
+		return fmt.Errorf("invalid chat id %q: %w", chat, err)
+	}
+
+	body := struct {
+		Text string `json:"text"`
+	}{
+		Text: text,
 	}
 
 	data, err := json.Marshal(body)
@@ -75,7 +111,12 @@ func (m *Model) SendMessage(ctx context.Context, chat string, thread int, text s
 		return fmt.Errorf("marshal sendMessage body: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, m.apiBase+"/messages", bytes.NewReader(data))
+	log.Printf("sendMessage request: user_id=%d body=%s", chatID, string(data))
+
+	// ВАЖНО: user_id в query, а не peer в body
+	url := fmt.Sprintf("%s/messages?user_id=%d", m.apiBase, chatID)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(data))
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
 	}
@@ -90,13 +131,14 @@ func (m *Model) SendMessage(ctx context.Context, chat string, thread int, text s
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= http.StatusBadRequest {
-		return fmt.Errorf("max api error: status %d", resp.StatusCode)
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("max api error: status %d, body=%s", resp.StatusCode, string(b))
 	}
 
 	return nil
 }
 
-// Новый метод: отправка сообщения с клавиатурой
+// SendMessageWithKeyboard - отправка сообщения с клавиатурой
 func (m *Model) SendMessageWithKeyboard(ctx context.Context, chat string, text string, kb keyboard, private bool) error {
 	if private {
 		contact, err := m.contacts.Find(chat)
@@ -108,14 +150,19 @@ func (m *Model) SendMessageWithKeyboard(ctx context.Context, chat string, text s
 		}
 	}
 
-	body := struct {
-		ChatID   string   `json:"chatId"`
-		Text     string   `json:"text"`
-		Keyboard keyboard `json:"keyboard"`
-	}{
-		ChatID:   chat,
-		Text:     text,
-		Keyboard: kb,
+	chatID, err := strconv.ParseInt(chat, 10, 64)
+	if err != nil {
+		return fmt.Errorf("invalid chat id %q: %w", chat, err)
+	}
+
+	body := sendMessageWithKbBody{
+		Text: text,
+		Attachments: []interface{}{
+			inlineKeyboardAttachment{
+				Type:    "inline_keyboard",
+				Payload: kb,
+			},
+		},
 	}
 
 	data, err := json.Marshal(body)
@@ -123,7 +170,11 @@ func (m *Model) SendMessageWithKeyboard(ctx context.Context, chat string, text s
 		return fmt.Errorf("marshal sendMessageWithKeyboard body: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, m.apiBase+"/messages", bytes.NewReader(data))
+	log.Printf("sendMessageWithKeyboard request: user_id=%d body=%s", chatID, string(data))
+
+	url := fmt.Sprintf("%s/messages?user_id=%d", m.apiBase, chatID)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(data))
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
 	}
@@ -137,8 +188,12 @@ func (m *Model) SendMessageWithKeyboard(ctx context.Context, chat string, text s
 	}
 	defer resp.Body.Close()
 
+	b, _ := io.ReadAll(resp.Body)
+	log.Printf("sendMessageWithKeyboard response: status=%d body=%s", resp.StatusCode, string(b))
+
 	if resp.StatusCode >= http.StatusBadRequest {
-		return fmt.Errorf("max api error: status %d", resp.StatusCode)
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("max api error: status %d, body=%s", resp.StatusCode, string(b))
 	}
 
 	return nil
@@ -162,13 +217,24 @@ func (m *Model) FillInfo(ctx context.Context) error {
 		return fmt.Errorf("/me error: status %d", resp.StatusCode)
 	}
 
+	/*var info botInfoResponse
+	 if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+		return fmt.Errorf("decode /me response: %w", err)
+	}*/
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("read /me response: %w", err)
+	}
+
+	log.Printf("/me raw response: %s", string(body))
+
 	var info botInfoResponse
-	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+	if err := json.Unmarshal(body, &info); err != nil {
 		return fmt.Errorf("decode /me response: %w", err)
 	}
 
-	m.ID = info.ID
-	m.Name = info.Nick
+	m.ID = info.UserID
+	m.Name = info.Name
 
 	return nil
 }

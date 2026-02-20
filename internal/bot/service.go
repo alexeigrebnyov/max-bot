@@ -5,13 +5,14 @@ package bot
 import (
 	"context"
 	"encoding/json"
-	"fmt"
+	"io"
 	"log"
 	"max-bot-service/internal/config"
 	"max-bot-service/internal/storage"
 	"max-bot-service/internal/storage/tables"
 	"net/http"
 	"strconv"
+	"strings"
 )
 
 const (
@@ -58,35 +59,24 @@ func (srv *Service) WebhookHandler() http.HandlerFunc {
 			return
 		}
 
-		// Проверка секрета
-		if srv.cfg.WebhookSecret != "" {
-			if r.Header.Get("X-Webhook-Secret") != srv.cfg.WebhookSecret {
-				log.Printf("webhook: invalid secret from %s", r.RemoteAddr)
-				w.WriteHeader(http.StatusUnauthorized)
-				return
-			}
-		}
-
 		defer r.Body.Close()
 
-		var upd struct {
-			Type    string          `json:"type"`
-			Payload json.RawMessage `json:"payload"`
-		}
+		body, _ := io.ReadAll(r.Body)
+		log.Printf("webhook raw: %s", string(body))
 
-		if err := json.NewDecoder(r.Body).Decode(&upd); err != nil {
+		var upd webhookUpdate
+		if err := json.Unmarshal(body, &upd); err != nil {
 			log.Printf("webhook: decode error: %v", err)
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
 
-		log.Printf("webhook: type=%s", upd.Type)
+		log.Printf("webhook: update_type=%s", upd.UpdateType)
 
-		switch upd.Type {
+		switch upd.UpdateType {
 		case "message_created":
-			srv.handleMessageCreated(r.Context(), upd.Payload)
+			srv.handleMessageCreated(r.Context(), upd.Message)
 		default:
-			// остальные пока игнорируем
 		}
 
 		w.WriteHeader(http.StatusOK)
@@ -95,25 +85,40 @@ func (srv *Service) WebhookHandler() http.HandlerFunc {
 
 // MAX: пример структуры события message_created (упрощённо)
 type messageCreatedPayload struct {
-	Message struct {
-		ID   string `json:"id"`
-		Text string `json:"text"`
-		// Упрощённо: контакт и отправитель
-		Contact *struct {
-			PhoneNumber string `json:"phone"`
-		} `json:"contact"`
-		From struct {
-			ID int64 `json:"id"`
-		} `json:"from"`
-		NewChatMembers []struct {
-			ID    int64 `json:"id"`
-			IsBot bool  `json:"is_bot"`
-		} `json:"new_chat_members"`
-	} `json:"message"`
-	Chat struct {
-		ID   string `json:"id"`
-		Type string `json:"type"`
-	} `json:"chat"`
+	Recipient struct {
+		ChatID   int64  `json:"chat_id"`
+		ChatType string `json:"chat_type"`
+		UserID   int64  `json:"user_id"`
+	} `json:"recipient"`
+
+	Body struct {
+		Mid         string `json:"mid"`
+		Seq         int64  `json:"seq"`
+		Text        string `json:"text"`
+		Attachments []struct {
+			Type    string `json:"type"`
+			Payload struct {
+				VCFInfo string `json:"vcf_info"`
+				MaxInfo struct {
+					UserID int64 `json:"user_id"`
+					// остальные поля не нужны
+				} `json:"max_info"`
+			} `json:"payload"`
+		} `json:"attachments"`
+	} `json:"body"`
+
+	Sender struct {
+		UserID int64  `json:"user_id"`
+		Name   string `json:"name"`
+		// остальные поля можно не описывать
+	} `json:"sender"`
+}
+
+type webhookUpdate struct {
+	Timestamp  int64           `json:"timestamp"`
+	Message    json.RawMessage `json:"message"`
+	UserLocale string          `json:"user_locale"`
+	UpdateType string          `json:"update_type"`
 }
 
 // Если не заполняешь srv.Bot.ID, можно не сравнивать по ID,
@@ -127,47 +132,72 @@ func (srv *Service) handleMessageCreated(ctx context.Context, raw json.RawMessag
 		return
 	}
 
-	// 0) Если бота добавили в чат (обычно group/supergroup)
-	if len(p.Message.NewChatMembers) > 0 {
-		for _, m := range p.Message.NewChatMembers {
-			// ID бота — это srv.Bot.ID (мы можем хранить его отдельно при старте через /me, если нужно)
-			if m.IsBot {
-				// На всякий случай просто реагируем, когда бот среди новых участников
-				text := fmt.Sprintf("Спасибо за добавление! Идентификатор чата: %s", p.Chat.ID)
-				if err := srv.Bot.SendMessage(ctx, p.Chat.ID, 0, text, false); err != nil {
-					log.Printf("send new member message error: %v", err)
-				}
-				return
-			}
-		}
-	}
+	// Для личного диалога используем user_id отправителя
+	// userId отправителя (ты)
+	userID := p.Sender.UserID // 23718629
+	// chatId диалога
+	chatID := p.Recipient.ChatID     // 174132016
+	chatType := p.Recipient.ChatType // "dialog"
+	text := p.Body.Text
 
-	// 1) Только приватные чаты для остальной логики
-	if p.Chat.Type != "private" {
+	log.Printf("message_created: senderUserID=%d, chatId=%d, type=%s, text=%q",
+		userID, chatID, chatType, text)
+
+	// Для дальнейшей логики будем считать chatKey = userID (для личных диалогов)
+	chatKey := strconv.FormatInt(userID, 10)
+
+	if chatType != "dialog" {
 		return
 	}
 
 	// 2) Обработка текстовых команд / меню
-	switch p.Message.Text {
+	switch text {
 	case "/start", menuBackToMain:
-		srv.sendMainMenuMessage(ctx, p.Chat.ID)
+		srv.sendMainMenuMessage(ctx, chatKey)
 		return
 
 	case menuNotificationSetting:
-		srv.sendNotificationSettingMessage(ctx, p.Chat.ID)
+		srv.sendNotificationSettingMessage(ctx, chatKey)
 		return
 
 	case menuExcludePhoneNumber:
-		srv.deleteContact(ctx, p.Chat.ID)
+		srv.deleteContact(ctx, chatKey)
 		return
 	}
 
-	// 3) Обработка контакта
-	if p.Message.Contact != nil {
-		srv.saveContact(ctx, p.Chat.ID, p.Message.From.ID, p.Message.Contact.PhoneNumber)
-		log.Printf("message_created: chatId=%s, type=%s", p.Chat.ID, p.Chat.Type)
-		return
+	// 3) Здесь пока нет contact в payload от MAX,
+	// поэтому блок с p.Message.Contact / NewChatMembers можно временно убрать
+	// или потом добавить, когда увидим реальный JSON с контактами.
+
+	if len(p.Body.Attachments) > 0 {
+		for _, att := range p.Body.Attachments {
+			if att.Type == "contact" {
+				phone := parsePhoneFromVCF(att.Payload.VCFInfo) // напишем функцию
+				if phone == "" {
+					log.Printf("contact attachment without phone")
+					return
+				}
+
+				// chatKey мы уже посчитали как userID отправителя
+				srv.saveContact(ctx, chatKey, att.Payload.MaxInfo.UserID, phone)
+				return
+			}
+		}
 	}
+}
+
+func parsePhoneFromVCF(vcf string) string {
+	lines := strings.Split(vcf, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "TEL") {
+			parts := strings.Split(line, ":")
+			if len(parts) == 2 {
+				return strings.TrimSpace(parts[1])
+			}
+		}
+	}
+	return ""
 }
 
 // Главное меню – пока просто текст, без клавиатуры
