@@ -1,3 +1,5 @@
+// internal/storage/tables/contacts.go
+
 package tables
 
 import (

@@ -23,8 +23,13 @@ const (
 )
 
 type Service struct {
-	storage       *storage.Service
-	Bot           *Model
+	storage *storage.Service
+	// Bot           *Model
+	// botModel      *Model    // реальная модель с FillInfo, ID, Name
+	// Bot           BotClient // интерфейс для отправки (используется в коде и тестах)
+	BotModel *Model // экспортируемое поле
+	Bot      BotClient
+
 	webhookSecret string
 
 	cfg *config.Config
@@ -38,6 +43,17 @@ func NewService(storage *storage.Service, cfg *config.Config) *Service {
 }
 
 func (srv *Service) Start(ctx context.Context) {
+	srv.BotModel = NewModel(srv.storage.Contacts, srv.cfg)
+	srv.Bot = srv.BotModel
+
+	if err := srv.BotModel.FillInfo(ctx); err != nil {
+		log.Printf("failed to load bot info: %v", err)
+	} else {
+		log.Printf("Bot info: ID=%d, Nick=%s", srv.BotModel.ID, srv.BotModel.Name)
+	}
+}
+
+/*func (srv *Service) Start(ctx context.Context) {
 	// Модель, работающая с MAX через HTTP
 	srv.Bot = NewModel(srv.storage.Contacts, srv.cfg)
 
@@ -47,7 +63,7 @@ func (srv *Service) Start(ctx context.Context) {
 	} else {
 		log.Printf("Bot info: ID=%d, Nick=%s", srv.Bot.ID, srv.Bot.Name)
 	}
-}
+}*/
 
 // WebhookHandler – приём входящих событий от MAX
 // На стороне MAX при подписке на webhook указывать этот же secret,
@@ -76,11 +92,33 @@ func (srv *Service) WebhookHandler() http.HandlerFunc {
 		switch upd.UpdateType {
 		case "message_created":
 			srv.handleMessageCreated(r.Context(), upd.Message)
+		case "bot_started":
+			srv.handleBotStarted(r.Context(), body)
 		default:
 		}
 
 		w.WriteHeader(http.StatusOK)
 	}
+}
+
+type botStartedPayload struct {
+	User struct {
+		UserID int64  `json:"user_id"`
+		Name   string `json:"name"`
+	} `json:"user"`
+}
+
+func (srv *Service) handleBotStarted(ctx context.Context, raw []byte) {
+	var p botStartedPayload
+	if err := json.Unmarshal(raw, &p); err != nil {
+		log.Printf("bot_started: parse error: %v", err)
+		return
+	}
+
+	chatKey := strconv.FormatInt(p.User.UserID, 10)
+	log.Printf("bot_started: user_id=%d", p.User.UserID)
+
+	srv.sendMainMenuMessage(ctx, chatKey)
 }
 
 // MAX: пример структуры события message_created (упрощённо)

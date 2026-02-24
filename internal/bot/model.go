@@ -64,6 +64,11 @@ type sendMessageWithKeyboardRequest struct {
 	Keyboard keyboard       `json:"keyboard"`
 }
 
+type BotClient interface {
+	SendMessage(ctx context.Context, chat string, thread int, text string, private bool) error
+	SendMessageWithKeyboard(ctx context.Context, chat string, text string, kb keyboard, private bool) error
+}
+
 func NewModel(contacts *tables.Contacts, cfg *config.Config) *Model {
 	return &Model{
 		httpClient: &http.Client{},

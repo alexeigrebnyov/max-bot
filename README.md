@@ -227,14 +227,30 @@ Webhook можно подать через ngrok или локальный HTTP�
 
 ---
 
-## 9. Технический долг / TODO
+## 9. Тестирование
 
-- Заменить `go-sqlite3` на SQLite‑драйвер без cgo (например, modernc.org/sqlite) и убрать предупреждения `Binary was compiled with 'CGO_ENABLED=0'`.
-- Перепроверить структуру ответа `/me` в API MAX и при необходимости скорректировать заполнение `Model.ID` и `Model.Name` в методе `FillInfo`.
-- Добавить обработку событий `message_callback` и `bot_started` (сейчас обрабатывается только `message_created`).
-- Добавить юнит‑тесты для:
-  - парсинга webhook‑запросов (`message_created`),
-  - сохранения/удаления контакта в SQLite,
-  - отправки уведомлений через `/send-message`.
+Тесты Go запускаются стандартной командой в корне модуля.
+
+В твоём случае:
+
+```bash
+cd E:\MaxCode\max.botservice
+go test ./...
+```
+
+Если хочешь гонять только тесты пакета `internal/bot`:
+
+```bash
+go test ./internal/bot
+```
+
+Чтобы видеть подробный вывод по каждому тесту:
+
+```bash
+go test -v ./internal/bot
+```
+
+## 10. Технический долг / TODO
+
+- Добавить обработку событий `message_callback` (сейчас обрабатывается только `message_created` и `bot_started`).
 - Добавить rate limiting на HTTP‑endpoint `/send-message`, чтобы защититься от чрезмерной нагрузки со стороны внешних систем.
-- Документировать пример nginx‑конфигурации для проксирования HTTPS → `max-bot-service` (если используется в продакшене).

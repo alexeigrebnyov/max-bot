@@ -29,8 +29,8 @@ func (srv *Service) Start(ctx context.Context) {
 	http.HandleFunc("/webhook", srv.Bot.WebhookHandler())
 
 	// API endpoints
-	http.Handle("/", &handlers.RootHandler{Bot: srv.Bot.Bot})
-	http.Handle("/send-message", &handlers.SendMessageHandler{Bot: srv.Bot.Bot})
+	http.Handle("/", &handlers.RootHandler{Bot: srv.Bot.BotModel})
+	http.Handle("/send-message", &handlers.SendMessageHandler{Bot: srv.Bot.BotModel})
 
 	server := &http.Server{Addr: fmt.Sprintf(":%d", port), Handler: nil}
 

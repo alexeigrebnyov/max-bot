@@ -1,3 +1,5 @@
+// internal/api/handlers/root.go
+
 package handlers
 
 import (

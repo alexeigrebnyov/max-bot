@@ -10,7 +10,8 @@ import (
 )
 
 type SendMessageHandler struct {
-	Bot *bot.Model
+	// Bot *bot.Model
+	Bot bot.BotClient
 }
 
 func (handler *SendMessageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
