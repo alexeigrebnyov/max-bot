@@ -67,6 +67,7 @@ type sendMessageWithKeyboardRequest struct {
 type BotClient interface {
 	SendMessage(ctx context.Context, chat string, thread int, text string, private bool) error
 	SendMessageWithKeyboard(ctx context.Context, chat string, text string, kb keyboard, private bool) error
+	SendToChatByID(ctx context.Context, chatID int64, text string) error
 }
 
 func NewModel(contacts *tables.Contacts, cfg *config.Config) *Model {
@@ -248,6 +249,44 @@ func (m *Model) FillInfo(ctx context.Context) error {
 
 	m.ID = info.UserID
 	m.Name = info.Name
+
+	return nil
+}
+
+func (m *Model) SendToChatByID(ctx context.Context, chatID int64, text string) error {
+	body := struct {
+		Text string `json:"text"`
+	}{
+		Text: text,
+	}
+
+	data, err := json.Marshal(body)
+	if err != nil {
+		return fmt.Errorf("marshal sendToChat body: %w", err)
+	}
+
+	log.Printf("sendToChat request: chat_id=%d body=%s", chatID, string(data))
+
+	url := fmt.Sprintf("%s/messages?chat_id=%d", m.apiBase, chatID)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(data))
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", m.token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := m.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("do request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= http.StatusBadRequest {
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("max api error: status %d, body=%s", resp.StatusCode, string(b))
+	}
 
 	return nil
 }

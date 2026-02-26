@@ -90,8 +90,19 @@ func (handler *SendByPhoneHandler) ServeHTTP(w http.ResponseWriter, r *http.Requ
 	if err := handler.Bot.SendMessage(r.Context(), req.Phone, 0, req.Text, true); err != nil {
 		log.Println("send-by-phone: SendMessage error:", err)
 		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"status":  "error",
+			"message": err.Error(),
+		})
 		return
 	}
 
-	w.WriteHeader(http.StatusNoContent)
+	log.Printf("send-by-phone: message sent ok for phone=%s", req.Phone)
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"status": "ok",
+		"phone":  req.Phone,
+	})
 }

@@ -19,7 +19,8 @@ const (
 )
 
 type Service struct {
-	Contacts *tables.Contacts
+	Contacts   *tables.Contacts
+	GroupChats *tables.GroupChats
 }
 
 func NewService() *Service {
@@ -39,6 +40,7 @@ func (srv *Service) Start(ctx context.Context) {
 	}
 
 	srv.Contacts = tables.NewContacts(db)
+	srv.GroupChats = tables.NewGroupChats(db)
 
 	go func() {
 		<-ctx.Done()

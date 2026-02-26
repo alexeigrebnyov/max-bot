@@ -1,3 +1,5 @@
+// cmd/main.go
+
 package main
 
 import (
@@ -22,7 +24,7 @@ func main() {
 	botService := bot.NewService(storeService, cfg)
 	botService.Start(ctx)
 
-	apiService := api.NewService(botService)
+	apiService := api.NewService(botService, storeService)
 	apiService.Start(ctx)
 
 	<-ctx.Done()

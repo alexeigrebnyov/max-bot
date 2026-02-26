@@ -255,3 +255,25 @@ docker build -t docker.dev.ask-glonass.ru/max-bot-service:local .
 docker-compose down
 docker-compose up -d
 docker logs -f botserver
+
+## 12. Обновление и просмотр списка снаружи
+
+Ручной рефреш (если нужно):
+
+```bash
+curl -X POST https://maksik.ask-gps.ru/refresh-group-chats
+```
+
+Просмотр кеша снаружи (.NET, браузер, curl):
+
+```bash
+curl https://maksik.ask-gps.ru/group-chats
+```
+
+Ответ:
+
+json
+[
+  { "ChatID": 174132016, "Title": "СГТ-Тревоги-Скорость" },
+  { "ChatID": 200500300, "Title": "Тест-группа" }
+]

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strconv"
 	"testing"
 
 	"max-bot-service/internal/config"
@@ -29,6 +30,12 @@ func (m *mockBot) SendMessageWithKeyboard(ctx context.Context, chat, text string
 
 func (m *mockBot) SendMessage(ctx context.Context, chat string, thread int, text string, private bool) error {
 	m.lastChatID = chat
+	m.lastText = text
+	return nil
+}
+
+func (m *mockBot) SendToChatByID(ctx context.Context, chatID int64, text string) error {
+	m.lastChatID = strconv.FormatInt(chatID, 10)
 	m.lastText = text
 	return nil
 }
