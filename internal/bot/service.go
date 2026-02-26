@@ -53,18 +53,6 @@ func (srv *Service) Start(ctx context.Context) {
 	}
 }
 
-/*func (srv *Service) Start(ctx context.Context) {
-	// Модель, работающая с MAX через HTTP
-	srv.Bot = NewModel(srv.storage.Contacts, srv.cfg)
-
-	// Один раз получаем информацию о боте
-	if err := srv.Bot.FillInfo(ctx); err != nil {
-		log.Printf("failed to load bot info: %v", err)
-	} else {
-		log.Printf("Bot info: ID=%d, Nick=%s", srv.Bot.ID, srv.Bot.Name)
-	}
-}*/
-
 // WebhookHandler – приём входящих событий от MAX
 // На стороне MAX при подписке на webhook указывать этот же secret,
 // и платформа будет слать заголовок X-Webhook-Secret

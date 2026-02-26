@@ -95,8 +95,16 @@ func (m *Model) SendMessage(ctx context.Context, chat string, thread int, text s
 		if err != nil {
 			return err
 		}
-		if contact != nil {
+
+		if contact == nil {
+			log.Printf("SendMessage: no contact found for key=%s", chat)
+		} else {
+			originalKey := chat
 			chat = strconv.FormatInt(contact.UserID, 10)
+			log.Printf(
+				"SendMessage: found contact key=%s -> userID=%d chatID=%d",
+				originalKey, contact.UserID, contact.ChatID,
+			)
 		}
 	}
 
@@ -118,7 +126,7 @@ func (m *Model) SendMessage(ctx context.Context, chat string, thread int, text s
 
 	log.Printf("sendMessage request: user_id=%d body=%s", chatID, string(data))
 
-	// ВАЖНО: user_id в query, а не peer в body
+	// user_id в query, а не peer в body
 	url := fmt.Sprintf("%s/messages?user_id=%d", m.apiBase, chatID)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(data))

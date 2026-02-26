@@ -31,6 +31,7 @@ func (srv *Service) Start(ctx context.Context) {
 	// API endpoints
 	http.Handle("/", &handlers.RootHandler{Bot: srv.Bot.BotModel})
 	http.Handle("/send-message", &handlers.SendMessageHandler{Bot: srv.Bot.BotModel})
+	http.Handle("/send-by-phone", &handlers.SendByPhoneHandler{Bot: srv.Bot.BotModel})
 
 	server := &http.Server{Addr: fmt.Sprintf(":%d", port), Handler: nil}
 

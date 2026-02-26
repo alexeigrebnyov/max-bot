@@ -1,4 +1,3 @@
-````markdown
 # max.botservice — бот-сервис для MAX
 
 HTTP‑сервис на Go для работы с ботом в мессенджере **MAX**.  
@@ -22,19 +21,17 @@ HTTP‑сервис на Go для работы с ботом в мессенд�
 
 Настраиваются через `.env` и/или `docker-compose.yml`.
 
-# заполнить реальные значения BOT_TOKEN/WEBHOOK_URL/WEBHOOK_SECRET
+### заполнить реальные значения BOT_TOKEN/WEBHOOK_URL/WEBHOOK_SECRET
 
 ```bash
 cp .env.example .env
 ```
 
-```env
+env
 BOT_TOKEN=your_max_bot_token_here           # токен бота из dev.max.ru
-WEBHOOK_URL=https://your-domain.com/webhook # публичный URL вебхука
-WEBHOOK_SECRET=random_secret_string         # секрет для проверки запросов
-MAX_API_BASE_URL=https://platform-api.max.ru # опционально, базовый URL API MAX
-```
-````
+WEBHOOK_URL=<https://your-domain.com/webhook> # публичный URL вебхука
+WEBHOOK_SECRET=random_secret_string         # секрет для запросов
+MAX_API_BASE_URL=<https://platform-api.max.ru> # опционально, базовый URL API MAX
 
 - `BOT_TOKEN` — обязателен, без него сервис не стартует.
 - `WEBHOOK_SECRET` — должен совпадать с тем, что укажете при подписке webhook в кабинете MAX.
@@ -221,12 +218,6 @@ go run ./cmd
 
 Webhook можно подать через ngrok или локальный HTTP‑тест из кабинета MAX.
 
-```
-
-```
-
----
-
 ## 9. Тестирование
 
 Тесты Go запускаются стандартной командой в корне модуля.
@@ -254,3 +245,13 @@ go test -v ./internal/bot
 
 - Добавить обработку событий `message_callback` (сейчас обрабатывается только `message_created` и `bot_started`).
 - Добавить rate limiting на HTTP‑endpoint `/send-message`, чтобы защититься от чрезмерной нагрузки со стороны внешних систем.
+
+## 11. Компилчяция
+
+В текущем проекте max.botservice сделать:
+docker build -t docker.dev.ask-glonass.ru/max-bot-service:local .
+
+И далее в max.botservice.deploy:
+docker-compose down
+docker-compose up -d
+docker logs -f botserver
