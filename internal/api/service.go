@@ -30,8 +30,9 @@ func NewService(botSrv *bot.Service, stor *storage.Service) *Service {
 func (srv *Service) Start(ctx context.Context) {
 	log.Printf("Listening on port %d", port)
 
-	// Webhook endpoint для MAX
-	http.HandleFunc("/webhook", srv.Bot.WebhookHandler())
+	if !srv.Bot.UseLongPolling() {
+		http.HandleFunc("/webhook", srv.Bot.WebhookHandler())
+	}
 
 	// API endpoints
 	http.Handle("/", &handlers.RootHandler{Bot: srv.Bot.BotModel})

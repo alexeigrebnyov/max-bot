@@ -1,13 +1,13 @@
 # max.botservice — бот-сервис для MAX
 
 HTTP‑сервис на Go для работы с ботом в мессенджере **MAX**.  
-Умеет принимать webhook‑события от MAX, вести диалоги с пользователем (меню, настройка уведомлений, сохранение телефона в SQLite) и предоставляет HTTP‑endpoint для отправки уведомлений из внешних систем.
+Умеет получать события от MAX через **Webhook** или **Long Polling**, вести диалоги с пользователем (меню, настройка уведомлений, сохранение телефона в SQLite) и предоставляет HTTP‑endpoint для отправки уведомлений из внешних систем.
 
 ---
 
 ## 1. Что делает сервис
 
-- Принимает сообщения от пользователей через **webhook** `/webhook`.
+- Принимает сообщения от пользователей через **Webhook** (`POST /webhook`) или через **Long Polling** (GET `/updates` к API MAX). Режим задаётся переменной `WEBHOOK_URL`: если она **пустая** — используется Long Polling; если указана — Webhook.
 - Показывает главное меню с inline‑кнопками:
   - «Настроить уведомления ✉»
   - «Отправить свой номер телефона ☎️»
@@ -21,21 +21,20 @@ HTTP‑сервис на Go для работы с ботом в мессенд�
 
 Настраиваются через `.env` и/или `docker-compose.yml`.
 
-### заполнить реальные значения BOT_TOKEN/WEBHOOK_URL/WEBHOOK_SECRET
+Заполнить реальные значения (минимум — `BOT_TOKEN`):
 
 ```bash
 cp .env.example .env
 ```
 
-env
-BOT_TOKEN=your_max_bot_token_here           # токен бота из dev.max.ru
-WEBHOOK_URL=<https://your-domain.com/webhook> # публичный URL вебхука
-WEBHOOK_SECRET=random_secret_string         # секрет для запросов
-MAX_API_BASE_URL=<https://platform-api.max.ru> # опционально, базовый URL API MAX
+| Переменная | Обязательность | Описание |
+|------------|----------------|----------|
+| `BOT_TOKEN` | обязательно | Токен бота из кабинета MAX (Чат-боты → Интеграция). |
+| `WEBHOOK_URL` | опционально | Публичный HTTPS-URL для Webhook (например `https://your-domain.com/webhook`). **Если не задан или пустой — сервис работает в режиме Long Polling** (сам опрашивает GET `/updates`). |
+| `WEBHOOK_SECRET` | для Webhook | Секрет, совпадающий с указанным при подписке Webhook в кабинете MAX. |
+| `MAX_API_BASE_URL` | опционально | Базовый URL API MAX, по умолчанию `https://platform-api.max.ru`. |
 
-- `BOT_TOKEN` — обязателен, без него сервис не стартует.
-- `WEBHOOK_SECRET` — должен совпадать с тем, что укажете при подписке webhook в кабинете MAX.
-- `WEBHOOK_URL` — тот же URL, который вы регистрируете в MAX для webhook.
+**Long Polling:** при пустом `WEBHOOK_URL` при старте бот сам снимает подписки на Webhook через API (GET/DELETE `/subscriptions`), чтобы получать события через GET `/updates`. Ручная отписка в кабинете MAX не обязательна.
 
 ---
 
@@ -183,7 +182,7 @@ Content-Type: application/json
 
 ## 6. Отличия от Telegram-версии
 
-- **Long Polling → Webhook**: вместо long polling используется только webhook `/webhook`.
+- **Webhook или Long Polling**: поддерживаются оба режима. Если задан `WEBHOOK_URL` — используется Webhook; если пустой — Long Polling (GET `/updates`).
 - **Reply Keyboard → Inline Keyboard**: меню и кнопки сделаны через inline‑клавиатуру:
   - типы кнопок `message` и `request_contact`.
 - **SDK**: вместо Telegram SDK — HTTP‑клиент к `https://platform-api.max.ru/messages` и другим endpoint’ам.
@@ -194,29 +193,45 @@ Content-Type: application/json
 
 ## 7. Минимальные шаги для запуска в MAX
 
+### Вариант A: Long Polling (проще для разработки и production без своего HTTPS)
+
 1. Зарегистрировать бота на платформе MAX и получить `BOT_TOKEN`.
-2. Поднять сервис (локально или через Docker) по HTTPS‑адресу, доступному из интернета.
-3. Указать `WEBHOOK_URL` и `WEBHOOK_SECRET` в `.env` и перезапустить контейнер.
-4. В кабинете MAX подписать webhook:
-   - URL = `WEBHOOK_URL`
-   - secret = `WEBHOOK_SECRET`
-5. Написать боту `/start` — должно прийти главное меню с кнопками.
+2. В `.env` задать только `BOT_TOKEN`; `WEBHOOK_URL` не задавать (или оставить пустым).
+3. Запустить сервис. Бот при старте сам снимет подписки на Webhook через API. В логах: `updates: using Long Polling (GET /updates)` (при наличии подписок — `unsubscribeWebhook: removed subscription url=...`).
+4. Написать боту `/start` — должно прийти главное меню с кнопками.
+
+### Вариант B: Webhook
+
+1. Зарегистрировать бота и получить `BOT_TOKEN`.
+2. Поднять сервис по HTTPS‑адресу, доступному из интернета.
+3. Указать `WEBHOOK_URL` и `WEBHOOK_SECRET` в `.env` и перезапустить.
+4. В кабинете MAX подписать Webhook: URL = `WEBHOOK_URL`, secret = `WEBHOOK_SECRET`.
+5. Написать боту `/start` — должно прийти главное меню.
 
 ---
 
 ## 8. Разработка
 
-Для локальной разработки без Docker:
+**Локально с Long Polling** (без ngrok и без настройки Webhook в кабинете):
+
+```bash
+export BOT_TOKEN=...
+# WEBHOOK_URL не задаём — будет Long Polling
+go run ./cmd
+```
+
+В кабинете MAX при этом не должна быть подписка на Webhook.
+
+**Локально с Webhook** (например через ngrok):
 
 ```bash
 export BOT_TOKEN=...
 export WEBHOOK_SECRET=dev_secret
-export WEBHOOK_URL=http://localhost:8080/webhook
-
+export WEBHOOK_URL=https://your-ngrok-url.ngrok.io/webhook
 go run ./cmd
 ```
 
-Webhook можно подать через ngrok или локальный HTTP‑тест из кабинета MAX.
+Webhook можно подать через ngrok или локальный HTTPS‑тест из кабинета MAX.
 
 ## 9. Тестирование
 

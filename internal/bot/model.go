@@ -11,10 +11,13 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"time"
 
 	"max-bot-service/internal/config"
 	"max-bot-service/internal/storage/tables"
 )
+
+const apiHTTPTimeout = 60 * time.Second
 
 type Model struct {
 	httpClient *http.Client
@@ -72,7 +75,7 @@ type BotClient interface {
 
 func NewModel(contacts *tables.Contacts, cfg *config.Config) *Model {
 	return &Model{
-		httpClient: &http.Client{},
+		httpClient: &http.Client{Timeout: apiHTTPTimeout},
 		apiBase:    cfg.ApiBaseURL,
 		token:      cfg.BotToken,
 		contacts:   contacts,
@@ -96,17 +99,16 @@ func (m *Model) SendMessage(ctx context.Context, chat string, thread int, text s
 		if err != nil {
 			return err
 		}
-
 		if contact == nil {
 			log.Printf("SendMessage: no contact found for key=%s", chat)
-		} else {
-			originalKey := chat
-			chat = strconv.FormatInt(contact.UserID, 10)
-			log.Printf(
-				"SendMessage: found contact key=%s -> userID=%d chatID=%d",
-				originalKey, contact.UserID, contact.ChatID,
-			)
+			return fmt.Errorf("contact not found for phone %q", chat)
 		}
+		originalKey := chat
+		chat = strconv.FormatInt(contact.UserID, 10)
+		log.Printf(
+			"SendMessage: found contact key=%s -> userID=%d chatID=%d",
+			originalKey, contact.UserID, contact.ChatID,
+		)
 	}
 
 	chatID, err := strconv.ParseInt(chat, 10, 64)

@@ -12,6 +12,7 @@ import (
 	"max-bot-service/internal/storage"
 	"max-bot-service/internal/storage/tables"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -39,6 +40,11 @@ func NewService(storage *storage.Service, cfg *config.Config) *Service {
 	}
 }
 
+// UseLongPolling возвращает true, если обновления получаем через GET /updates (WEBHOOK_URL пустой).
+func (srv *Service) UseLongPolling() bool {
+	return srv.cfg.UseLongPolling
+}
+
 func (srv *Service) Start(ctx context.Context) {
 	srv.BotModel = NewModel(srv.storage.Contacts, srv.cfg)
 	srv.Bot = srv.BotModel
@@ -51,6 +57,14 @@ func (srv *Service) Start(ctx context.Context) {
 
 	if err := srv.RefreshGroupChats(ctx); err != nil {
 		log.Printf("RefreshGroupChats error: %v", err)
+	}
+
+	if srv.cfg.UseLongPolling {
+		if err := srv.unsubscribeWebhook(ctx); err != nil {
+			log.Printf("unsubscribeWebhook (non-fatal): %v", err)
+		}
+		log.Printf("updates: using Long Polling (GET /updates)")
+		go srv.runPollLoop(ctx)
 	}
 
 	// Периодический рефреш каждые 10 минут и синхронизирует список групп с MAX.
@@ -164,6 +178,159 @@ type webhookUpdate struct {
 	Message    json.RawMessage `json:"message"`
 	UserLocale string          `json:"user_locale"`
 	UpdateType string          `json:"update_type"`
+}
+
+// updatesResponse — ответ GET /updates (Long Polling).
+type updatesResponse struct {
+	Updates []webhookUpdate `json:"updates"`
+	Marker  *int64          `json:"marker"`
+}
+
+const pollTimeoutSec = 30
+const pollLimit = 100
+
+func (srv *Service) fetchUpdates(ctx context.Context, marker *int64) ([]webhookUpdate, *int64, error) {
+	url := fmt.Sprintf("%s/updates?timeout=%d&limit=%d", srv.cfg.ApiBaseURL, pollTimeoutSec, pollLimit)
+	if marker != nil {
+		url = fmt.Sprintf("%s/updates?timeout=%d&limit=%d&marker=%d", srv.cfg.ApiBaseURL, pollTimeoutSec, pollLimit, *marker)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, nil, fmt.Errorf("create updates request: %w", err)
+	}
+	req.Header.Set("Authorization", srv.cfg.BotToken)
+
+	client := &http.Client{Timeout: 65 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, nil, fmt.Errorf("do updates request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= http.StatusBadRequest {
+		return nil, nil, fmt.Errorf("updates api error: status %d, body=%s", resp.StatusCode, string(body))
+	}
+
+	var ur updatesResponse
+	if err := json.Unmarshal(body, &ur); err != nil {
+		return nil, nil, fmt.Errorf("decode updates response: %w", err)
+	}
+
+	return ur.Updates, ur.Marker, nil
+}
+
+func (srv *Service) runPollLoop(ctx context.Context) {
+	var marker *int64
+	for {
+		select {
+		case <-ctx.Done():
+			log.Printf("long polling loop stopped: ctx done")
+			return
+		default:
+		}
+
+		updates, nextMarker, err := srv.fetchUpdates(ctx, marker)
+		if err != nil {
+			log.Printf("fetchUpdates error: %v", err)
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(5 * time.Second):
+			}
+			continue
+		}
+
+		if nextMarker != nil {
+			marker = nextMarker
+		}
+
+		if len(updates) > 0 {
+			log.Printf("long poll: received %d update(s)", len(updates))
+		}
+
+		for _, upd := range updates {
+			switch upd.UpdateType {
+			case "message_created":
+				srv.handleMessageCreated(ctx, upd.Message)
+			case "bot_started":
+				srv.handleBotStarted(ctx, upd.Message)
+			default:
+				log.Printf("long poll: unhandled update_type=%s", upd.UpdateType)
+			}
+		}
+	}
+}
+
+// subscriptionRecord — элемент ответа GET /subscriptions (MAX API).
+type subscriptionRecord struct {
+	URL string `json:"url"`
+}
+
+type subscriptionsListResponse struct {
+	Subscriptions []subscriptionRecord `json:"subscriptions"`
+}
+
+// unsubscribeWebhook снимает все подписки на Webhook через API, чтобы Long Polling получал события.
+func (srv *Service) unsubscribeWebhook(ctx context.Context) error {
+	client := &http.Client{Timeout: 25 * time.Second}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.cfg.ApiBaseURL+"/subscriptions", nil)
+	if err != nil {
+		return fmt.Errorf("create GET subscriptions request: %w", err)
+	}
+	req.Header.Set("Authorization", srv.cfg.BotToken)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("GET subscriptions: %w", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+
+	if resp.StatusCode >= http.StatusBadRequest {
+		return fmt.Errorf("GET subscriptions: status %d, body=%s", resp.StatusCode, string(body))
+	}
+
+	var list subscriptionsListResponse
+	if err := json.Unmarshal(body, &list); err != nil {
+		return fmt.Errorf("decode GET subscriptions response: %w", err)
+	}
+
+	if len(list.Subscriptions) == 0 {
+		log.Printf("unsubscribeWebhook: no active subscriptions")
+		return nil
+	}
+
+	for _, sub := range list.Subscriptions {
+		if sub.URL == "" {
+			continue
+		}
+		delURL := srv.cfg.ApiBaseURL + "/subscriptions?url=" + url.QueryEscape(sub.URL)
+		delReq, err := http.NewRequestWithContext(ctx, http.MethodDelete, delURL, nil)
+		if err != nil {
+			log.Printf("unsubscribeWebhook: create DELETE request for %q: %v", sub.URL, err)
+			continue
+		}
+		delReq.Header.Set("Authorization", srv.cfg.BotToken)
+
+		delResp, err := client.Do(delReq)
+		if err != nil {
+			log.Printf("unsubscribeWebhook: DELETE %q: %v", sub.URL, err)
+			continue
+		}
+		delBody, _ := io.ReadAll(delResp.Body)
+		delResp.Body.Close()
+
+		if delResp.StatusCode >= http.StatusBadRequest {
+			log.Printf("unsubscribeWebhook: DELETE %q status %d body=%s", sub.URL, delResp.StatusCode, string(delBody))
+			continue
+		}
+		log.Printf("unsubscribeWebhook: removed subscription url=%s", sub.URL)
+	}
+
+	return nil
 }
 
 // Если не заполняешь srv.Bot.ID, можно не сравнивать по ID,

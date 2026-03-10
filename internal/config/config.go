@@ -6,10 +6,11 @@ import (
 )
 
 type Config struct {
-	BotToken      string
-	WebhookURL    string
-	WebhookSecret string
-	ApiBaseURL    string
+	BotToken       string
+	WebhookURL     string
+	WebhookSecret  string
+	ApiBaseURL     string
+	UseLongPolling bool // true, если WEBHOOK_URL пустой — получаем обновления через GET /updates
 }
 
 func Load() *Config {
@@ -23,6 +24,8 @@ func Load() *Config {
 	if cfg.ApiBaseURL == "" {
 		cfg.ApiBaseURL = os.Getenv("API_BASE_URL") // "https://platform-api.max.ru"
 	}
+
+	cfg.UseLongPolling = cfg.WebhookURL == ""
 
 	return cfg
 }

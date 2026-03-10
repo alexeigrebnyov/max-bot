@@ -83,8 +83,17 @@ func (handler *SendByPhoneHandler) ServeHTTP(w http.ResponseWriter, r *http.Requ
 	} // Декодирует JSON из тела в структуру SendByPhoneRequest.
 	//	Если JSON кривой или поля не совпадают — логирует ошибку и возвращает 400.
 
-	// логируем входящий запрос
 	log.Printf("send-by-phone: incoming request phone=%s text=%q", req.Phone, req.Text)
+
+	if req.Phone == "" {
+		log.Println("send-by-phone: phone is required")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"status":  "error",
+			"message": "phone is required",
+		})
+		return
+	}
 
 	// используем телефон как ключ, private = true
 	if err := handler.Bot.SendMessage(r.Context(), req.Phone, 0, req.Text, true); err != nil {
