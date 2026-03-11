@@ -19,10 +19,12 @@ import (
 )
 
 const (
-	menuBackToMain          = "Вернуться к главному меню 🗄"
-	menuNotificationSetting = "Настроить уведомления ✉"
-	menuSendPhoneNumber     = "Отправить свой номер телефона ☎️"
-	menuExcludePhoneNumber  = "Исключить свой номер телефона ❌"
+	menuBackToMain          = "В главное меню ⬅️"
+	menuNotificationSetting = "Настроить уведомления 🔔"
+	menuSendPhoneNumber     = "Отпр. свой # телефона 📞"
+	menuExcludePhoneNumber  = "Искл. свой # телефона 📵"
+	menuShowChatID          = "ID этого чата 🆔"
+	menuListChats           = "Список групп 💬"
 )
 
 type Service struct {
@@ -67,9 +69,10 @@ func (srv *Service) Start(ctx context.Context) {
 		go srv.runPollLoop(ctx)
 	}
 
-	// Периодический рефреш каждые 10 минут и синхронизирует список групп с MAX.
+	// Периодический рефреш синхронизирует список групп с MAX.
 	go func() {
-		ticker := time.NewTicker(10 * time.Minute)
+		// Делать чаще, чтобы приветствие приходило быстрее и независимо от bot_added (который приходит без chat_id).
+		ticker := time.NewTicker(5 * time.Minute)
 		defer ticker.Stop()
 
 		for {
@@ -78,8 +81,8 @@ func (srv *Service) Start(ctx context.Context) {
 				log.Printf("group chats refresh loop stopped: ctx done")
 				return
 			case <-ticker.C:
-				if err := srv.RefreshGroupChats(ctx); err != nil {
-					log.Printf("RefreshGroupChats error on timer: %v", err)
+				if err := srv.RefreshGroupChatsAndGreet(ctx); err != nil {
+					log.Printf("RefreshGroupChatsAndGreet error on timer: %v", err)
 				}
 			}
 		}
@@ -91,6 +94,7 @@ func (srv *Service) Start(ctx context.Context) {
 // и платформа будет слать заголовок X-Webhook-Secret
 func (srv *Service) WebhookHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("webhook: POST received")
 		if r.Method != http.MethodPost {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
@@ -99,7 +103,7 @@ func (srv *Service) WebhookHandler() http.HandlerFunc {
 		defer r.Body.Close()
 
 		body, _ := io.ReadAll(r.Body)
-		log.Printf("webhook raw: %s", string(body))
+		log.Printf("webhook: body_len=%d raw=%s", len(body), string(body))
 
 		var upd webhookUpdate
 		if err := json.Unmarshal(body, &upd); err != nil {
@@ -108,14 +112,34 @@ func (srv *Service) WebhookHandler() http.HandlerFunc {
 			return
 		}
 
-		log.Printf("webhook: update_type=%s", upd.UpdateType)
+		log.Printf("webhook: update_type=%q message_len=%d callback_len=%d", upd.UpdateType, len(upd.Message), len(upd.Callback))
+		if upd.UpdateType == "" {
+			var m map[string]interface{}
+			if json.Unmarshal(body, &m) == nil {
+				var keys []string
+				for k := range m {
+					keys = append(keys, k)
+				}
+				log.Printf("webhook: update_type пустой; ключи в body: %v", keys)
+			}
+		}
 
 		switch upd.UpdateType {
 		case "message_created":
 			srv.handleMessageCreated(r.Context(), upd.Message)
+		case "message_callback":
+			raw := upd.Callback
+			if len(raw) == 0 {
+				raw = upd.Message
+			}
+			srv.handleMessageCallback(r.Context(), raw)
 		case "bot_started":
+			// У bot_started payload на верхнем уровне update (recipient, user), а не в message.
 			srv.handleBotStarted(r.Context(), body)
+		case "bot_added":
+			srv.handleBotAdded(r.Context(), body)
 		default:
+			log.Printf("webhook: unhandled update_type=%s", upd.UpdateType)
 		}
 
 		w.WriteHeader(http.StatusOK)
@@ -123,6 +147,12 @@ func (srv *Service) WebhookHandler() http.HandlerFunc {
 }
 
 type botStartedPayload struct {
+	Recipient struct {
+		ChatID   int64  `json:"chat_id"`
+		ChatType string `json:"chat_type"`
+		UserID   int64  `json:"user_id"`
+	} `json:"recipient"`
+
 	User struct {
 		UserID int64  `json:"user_id"`
 		Name   string `json:"name"`
@@ -136,10 +166,152 @@ func (srv *Service) handleBotStarted(ctx context.Context, raw []byte) {
 		return
 	}
 
-	chatKey := strconv.FormatInt(p.User.UserID, 10)
-	log.Printf("bot_started: user_id=%d", p.User.UserID)
+	// Если бота добавили в групповой чат — сохраняем чат в БД и показываем меню с кнопкой (если бот администратор).
+	if p.Recipient.ChatType == "chat" && p.Recipient.ChatID != 0 {
+		chatID := p.Recipient.ChatID
+		log.Printf("bot_started: group chat_id=%d", chatID)
 
-	srv.sendMainMenuMessage(ctx, chatKey)
+		gcByID, err := srv.storage.GroupChats.FindByChatID(chatID)
+		if err != nil {
+			log.Printf("bot_started: group_chats FindByChatID error chatID=%d: %v", chatID, err)
+		}
+		if gcByID == nil {
+			info, err := srv.getChatInfo(ctx, chatID)
+			if err != nil {
+				log.Printf("bot_started: getChatInfo error chatID=%d: %v", chatID, err)
+			} else if info.Type == "chat" {
+				title := info.Title
+				if title == "" {
+					title = strconv.FormatInt(info.ChatID, 10)
+				}
+				if _, err := srv.storage.GroupChats.Save(&tables.GroupChat{
+					ChatID: info.ChatID,
+					Title:  title,
+				}); err != nil {
+					log.Printf("bot_started: group_chats save error chatID=%d title=%q: %v", info.ChatID, title, err)
+				}
+			}
+		}
+
+		srv.sendBotAddedGreeting(ctx, chatID)
+		return
+	}
+
+	// Личный диалог: показываем меню. Источник идентификатора чата может быть разным в зависимости от payload MAX.
+	var chatKey string
+	if p.User.UserID != 0 {
+		chatKey = strconv.FormatInt(p.User.UserID, 10)
+		log.Printf("bot_started: user_id=%d (from user)", p.User.UserID)
+		srv.sendMainMenuMessage(ctx, chatKey)
+		return
+	}
+	if p.Recipient.ChatType == "dialog" && p.Recipient.ChatID != 0 {
+		log.Printf("bot_started: chat_id=%d (from recipient, dialog)", p.Recipient.ChatID)
+		srv.sendMainMenuMessageByChatID(ctx, p.Recipient.ChatID)
+		return
+	}
+	if p.Recipient.UserID != 0 {
+		chatKey = strconv.FormatInt(p.Recipient.UserID, 10)
+		log.Printf("bot_started: user_id=%d (from recipient)", p.Recipient.UserID)
+		srv.sendMainMenuMessage(ctx, chatKey)
+		return
+	}
+	log.Printf("bot_started: no user_id or chat_id in payload (user=%+v recipient=%+v)", p.User, p.Recipient)
+}
+
+func (srv *Service) handleBotAdded(ctx context.Context, raw []byte) {
+	// MAX присылает bot_added без chat_id (message=null), поэтому используем событие как триггер
+	// синхронизации списка чатов и приветствия новых чатов.
+	if len(raw) == 0 {
+		log.Printf("bot_added: message is empty (expected), syncing group chats")
+	} else {
+		log.Printf("bot_added: message len=%d, syncing group chats", len(raw))
+	}
+	if err := srv.RefreshGroupChatsAndGreet(ctx); err != nil {
+		log.Printf("bot_added: RefreshGroupChatsAndGreet error: %v", err)
+	}
+}
+
+func (srv *Service) sendBotAddedGreeting(ctx context.Context, chatID int64) {
+	if !srv.isBotAdminInChat(ctx, chatID) {
+		log.Printf("bot_added: chat_id=%d — бот не администратор, меню в группе не показываем", chatID)
+		return
+	}
+	srv.sendGroupMenu(ctx, chatID)
+}
+
+// sendGroupMenu отправляет в групповой чат приветствие и меню с одной кнопкой «Покажи ID чата».
+// Вызывать только когда бот уже проверен как администратор (isBotAdminInChat).
+func (srv *Service) sendGroupMenu(ctx context.Context, chatID int64) {
+	text := fmt.Sprintf("Добро пожаловать! ID этого чата: %d.", chatID)
+	if err := srv.Bot.SendToChatByID(ctx, chatID, text); err != nil {
+		if srv.isChatDeniedError(err) {
+			srv.storage.GroupChats.DeleteByChatID(chatID)
+			log.Printf("sendGroupMenu: chat_id=%d denied/closed, removed from DB", chatID)
+		} else {
+			log.Printf("sendGroupMenu: greeting chat_id=%d error: %v", chatID, err)
+		}
+		return
+	}
+	const payloadPrefix = "chatid:"
+	btnPayload := payloadPrefix + strconv.FormatInt(chatID, 10)
+	btnText := menuShowChatID + " " + strconv.FormatInt(chatID, 10)
+	groupMenuKb := keyboard{
+		Buttons: [][]keyboardButton{
+			{{Type: "message", Text: btnText, Payload: btnPayload}},
+		},
+	}
+	if err := srv.Bot.SendToChatByIDWithKeyboard(ctx, chatID, "ID чата", groupMenuKb); err != nil {
+		if srv.isChatDeniedError(err) {
+			srv.storage.GroupChats.DeleteByChatID(chatID)
+			log.Printf("sendGroupMenu: chat_id=%d denied/closed (menu), removed from DB", chatID)
+		} else {
+			log.Printf("sendGroupMenu: menu chat_id=%d error: %v", chatID, err)
+		}
+		return
+	}
+	if err := srv.storage.GroupChats.SetMenuSent(chatID); err != nil {
+		log.Printf("sendGroupMenu: SetMenuSent chat_id=%d error: %v", chatID, err)
+	}
+}
+
+func (srv *Service) isChatDeniedError(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	return strings.Contains(s, "403") && strings.Contains(s, "chat.denied")
+}
+
+// isGroupStartTrigger возвращает true, если текст похож на запрос меню: "start", "/start" или "@bot start".
+func isGroupStartTrigger(trimmed string) bool {
+	trimmed = strings.TrimSpace(trimmed)
+	if trimmed == "" {
+		return false
+	}
+	if trimmed == "start" || trimmed == "/start" {
+		return true
+	}
+	for _, w := range strings.Fields(trimmed) {
+		w = strings.TrimSpace(w)
+		if w == "start" || w == "/start" {
+			return true
+		}
+	}
+	return false
+}
+
+// sendChatIDToGroup отправляет в групповой чат два сообщения: подпись и ID чата.
+func (srv *Service) sendChatIDToGroup(ctx context.Context, chatID int64) {
+	msg1, msg2 := "ID этого чата:", strconv.FormatInt(chatID, 10)
+	log.Printf("sendChatIDToGroup: chat_id=%d -> sending msg1=%q msg2=%q", chatID, msg1, msg2)
+	if err := srv.Bot.SendToChatByID(ctx, chatID, msg1); err != nil {
+		log.Printf("sendChatIDToGroup: caption chat_id=%d error: %v", chatID, err)
+		return
+	}
+	if err := srv.Bot.SendToChatByID(ctx, chatID, msg2); err != nil {
+		log.Printf("sendChatIDToGroup: id chat_id=%d error: %v", chatID, err)
+	}
 }
 
 // MAX: пример структуры события message_created (упрощённо)
@@ -154,6 +326,7 @@ type messageCreatedPayload struct {
 		Mid         string `json:"mid"`
 		Seq         int64  `json:"seq"`
 		Text        string `json:"text"`
+		Payload     string `json:"payload"` // при нажатии кнопки типа "message" MAX может присылать payload сюда
 		Attachments []struct {
 			Type    string `json:"type"`
 			Payload struct {
@@ -173,26 +346,31 @@ type messageCreatedPayload struct {
 	} `json:"sender"`
 }
 
+// webhookUpdate — структура Update из MAX (Webhook POST и GET /updates).
+// Для message_callback данные приходят в поле callback, а не message (см. dev.max.ru/docs-api/methods/POST/answers).
 type webhookUpdate struct {
 	Timestamp  int64           `json:"timestamp"`
 	Message    json.RawMessage `json:"message"`
+	Callback   json.RawMessage `json:"callback"` // для update_type=message_callback
 	UserLocale string          `json:"user_locale"`
 	UpdateType string          `json:"update_type"`
 }
 
-// updatesResponse — ответ GET /updates (Long Polling).
+// updatesResponse — ответ GET /updates (Long Polling). Updates как RawMessage, чтобы для bot_started
+// передавать полный объект (recipient, user на верхнем уровне, не в message).
 type updatesResponse struct {
-	Updates []webhookUpdate `json:"updates"`
-	Marker  *int64          `json:"marker"`
+	Updates []json.RawMessage `json:"updates"`
+	Marker  *int64            `json:"marker"`
 }
 
 const pollTimeoutSec = 30
 const pollLimit = 100
 
-func (srv *Service) fetchUpdates(ctx context.Context, marker *int64) ([]webhookUpdate, *int64, error) {
-	url := fmt.Sprintf("%s/updates?timeout=%d&limit=%d", srv.cfg.ApiBaseURL, pollTimeoutSec, pollLimit)
+func (srv *Service) fetchUpdates(ctx context.Context, marker *int64) ([]json.RawMessage, *int64, error) {
+	// types=message_created,message_callback,... — иначе нажатия кнопок (message_callback) не приходят (см. GET /updates в документации MAX).
+	url := fmt.Sprintf("%s/updates?timeout=%d&limit=%d&types=message_created,message_callback,bot_started,bot_added", srv.cfg.ApiBaseURL, pollTimeoutSec, pollLimit)
 	if marker != nil {
-		url = fmt.Sprintf("%s/updates?timeout=%d&limit=%d&marker=%d", srv.cfg.ApiBaseURL, pollTimeoutSec, pollLimit, *marker)
+		url = fmt.Sprintf("%s/updates?timeout=%d&limit=%d&types=message_created,message_callback,bot_started,bot_added&marker=%d", srv.cfg.ApiBaseURL, pollTimeoutSec, pollLimit, *marker)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -217,7 +395,6 @@ func (srv *Service) fetchUpdates(ctx context.Context, marker *int64) ([]webhookU
 	if err := json.Unmarshal(body, &ur); err != nil {
 		return nil, nil, fmt.Errorf("decode updates response: %w", err)
 	}
-
 	return ur.Updates, ur.Marker, nil
 }
 
@@ -250,12 +427,35 @@ func (srv *Service) runPollLoop(ctx context.Context) {
 			log.Printf("long poll: received %d update(s)", len(updates))
 		}
 
-		for _, upd := range updates {
+		for _, rawUpd := range updates {
+			var upd webhookUpdate
+			if err := json.Unmarshal(rawUpd, &upd); err != nil {
+				log.Printf("long poll: decode update error: %v", err)
+				continue
+			}
+			preview := upd.Message
+			if len(upd.Callback) > 0 {
+				preview = upd.Callback
+			}
+			msgPreview := string(preview)
+			if len(msgPreview) > 500 {
+				msgPreview = msgPreview[:500] + "..."
+			}
+			log.Printf("long poll: update_type=%s message_len=%d callback_len=%d preview=%s", upd.UpdateType, len(upd.Message), len(upd.Callback), msgPreview)
 			switch upd.UpdateType {
 			case "message_created":
 				srv.handleMessageCreated(ctx, upd.Message)
+			case "message_callback":
+				raw := upd.Callback
+				if len(raw) == 0 {
+					raw = upd.Message
+				}
+				srv.handleMessageCallback(ctx, raw)
 			case "bot_started":
-				srv.handleBotStarted(ctx, upd.Message)
+				// У bot_started payload на верхнем уровне (recipient, user), не в message.
+				srv.handleBotStarted(ctx, rawUpd)
+			case "bot_added":
+				srv.handleBotAdded(ctx, rawUpd)
 			default:
 				log.Printf("long poll: unhandled update_type=%s", upd.UpdateType)
 			}
@@ -333,6 +533,99 @@ func (srv *Service) unsubscribeWebhook(ctx context.Context) error {
 	return nil
 }
 
+// messageCallbackPayload — событие нажатия inline-кнопки (message_callback).
+// Вариант 1: когда callback приходит как message (body.payload, recipient).
+type messageCallbackPayload struct {
+	Recipient struct {
+		ChatID   int64  `json:"chat_id"`
+		ChatType string `json:"chat_type"`
+		UserID   int64  `json:"user_id"`
+	} `json:"recipient"`
+	ChatID int64 `json:"chat_id"`
+	Body   struct {
+		Payload string `json:"payload"`
+		Text    string `json:"text"`
+		Mid     string `json:"mid"`
+	} `json:"body"`
+}
+
+// callbackPayload — формат объекта callback в Update (см. dev.max.ru: updates[i].callback.callback_id).
+// Данные приходят в поле callback, не message.
+type callbackPayload struct {
+	CallbackID string `json:"callback_id"`
+	Payload    string `json:"payload"`
+	Text       string `json:"text"`
+	Recipient  struct {
+		ChatID   int64  `json:"chat_id"`
+		ChatType string `json:"chat_type"`
+		UserID   int64  `json:"user_id"`
+	} `json:"recipient"`
+	ChatID int64 `json:"chat_id"`
+}
+
+func (srv *Service) handleMessageCallback(ctx context.Context, raw []byte) {
+	log.Printf("message_callback: entered, len(raw)=%d", len(raw))
+	if len(raw) == 0 {
+		log.Printf("message_callback: empty callback/message (проверьте: 1) подписка webhook должна включать update_types message_callback; 2) для message_callback MAX присылает данные в поле callback, не message)")
+		return
+	}
+	log.Printf("message_callback RAW: %s", string(raw))
+
+	var payloadStr string
+	var chatID int64
+
+	// Пробуем формат callback (поле callback в Update по документации MAX).
+	var cb callbackPayload
+	if err := json.Unmarshal(raw, &cb); err == nil && (cb.CallbackID != "" || cb.Payload != "" || cb.Recipient.ChatID != 0) {
+		payloadStr = strings.TrimSpace(cb.Payload)
+		if payloadStr == "" {
+			payloadStr = strings.TrimSpace(cb.Text)
+		}
+		chatID = cb.Recipient.ChatID
+		if chatID == 0 {
+			chatID = cb.ChatID
+		}
+		log.Printf("message_callback: parsed as callback payload=%q chat_id=%d callback_id=%s", payloadStr, chatID, cb.CallbackID)
+	} else {
+		// Формат message (body.payload, recipient).
+		var p messageCallbackPayload
+		if err := json.Unmarshal(raw, &p); err != nil {
+			log.Printf("message_callback: parse error: %v", err)
+			return
+		}
+		payloadStr = strings.TrimSpace(p.Body.Payload)
+		if payloadStr == "" {
+			payloadStr = strings.TrimSpace(p.Body.Text)
+		}
+		chatID = p.Recipient.ChatID
+		if chatID == 0 {
+			chatID = p.ChatID
+		}
+	}
+
+	const payloadPrefix = "chatid:"
+	if strings.HasPrefix(payloadStr, payloadPrefix) {
+		id, err := strconv.ParseInt(strings.TrimSpace(payloadStr[len(payloadPrefix):]), 10, 64)
+		if err != nil {
+			log.Printf("message_callback: invalid chatid in payload=%q: %v", payloadStr, err)
+			return
+		}
+		chatID = id
+	} else if payloadStr == menuShowChatID {
+		// chatID уже из recipient
+	} else if payloadStr != "" {
+		log.Printf("message_callback: skip payload=%q", payloadStr)
+		return
+	}
+
+	if chatID == 0 {
+		log.Printf("message_callback: no chat_id")
+		return
+	}
+	log.Printf("message_callback: chat_id=%d -> sendChatIDToGroup", chatID)
+	srv.sendChatIDToGroup(ctx, chatID)
+}
+
 // Если не заполняешь srv.Bot.ID, можно не сравнивать по ID,
 // а просто считать, что если в new_chat_members есть хотя бы один бот,
 // значит добавили и нашего (это корректно, если нет сценариев,
@@ -351,13 +644,15 @@ func (srv *Service) handleMessageCreated(ctx context.Context, raw json.RawMessag
 	chatID := p.Recipient.ChatID     // 174132016
 	chatType := p.Recipient.ChatType // "dialog"
 	text := p.Body.Text
+	if text == "" && p.Body.Payload != "" {
+		text = p.Body.Payload // при нажатии кнопки MAX может присылать только payload
+	}
 
-	log.Printf("message_created: senderUserID=%d, chatId=%d, type=%s, text=%q",
-		userID, chatID, chatType, text)
+	log.Printf("message_created: senderUserID=%d, chatId=%d, type=%s, text=%q, payload=%q",
+		userID, chatID, chatType, text, p.Body.Payload)
 
 	// 1) если это групповой чат — убеждаемся, что он есть в group_chats
 	if chatType == "chat" {
-
 		// сначала проверим в БД по chatID
 		gcByID, err := srv.storage.GroupChats.FindByChatID(chatID)
 		if err != nil {
@@ -382,11 +677,41 @@ func (srv *Service) handleMessageCreated(ctx context.Context, raw json.RawMessag
 					log.Printf("group_chats save error chatID=%d title=%q: %v", info.ChatID, title, err)
 				} else {
 					log.Printf("group_chats saved from message chatID=%d title=%q", info.ChatID, title)
+					// Первый раз увидели этот групповой чат — отправим приветственное сообщение.
+					srv.sendBotAddedGreeting(ctx, info.ChatID)
 				}
 			}
 		}
 
-		// дальше можно обработать групповой message_created, если нужно
+		// Кнопка «Покажи ID чата» в группе: payload "chatid:{id}", или текст "Покажи ID чата" / "Покажи ID чата -123".
+		trimmed := strings.TrimSpace(text)
+		log.Printf("message_created GROUP: chat_id=%d text=%q", chatID, text)
+		if strings.HasPrefix(trimmed, "chatid:") {
+			idStr := strings.TrimSpace(trimmed[len("chatid:"):])
+			if id, err := strconv.ParseInt(idStr, 10, 64); err == nil {
+				log.Printf("GROUP BUTTON: payload chatid -> sendChatIDToGroup chat_id=%d", id)
+				srv.sendChatIDToGroup(ctx, id)
+				return
+			}
+		}
+		if trimmed == menuShowChatID {
+			log.Printf("GROUP BUTTON: text match -> sendChatIDToGroup chat_id=%d", chatID)
+			srv.sendChatIDToGroup(ctx, chatID)
+			return
+		}
+		if strings.HasPrefix(trimmed, menuShowChatID) {
+			rest := strings.TrimSpace(trimmed[len(menuShowChatID):])
+			if id, err := strconv.ParseInt(rest, 10, 64); err == nil {
+				log.Printf("GROUP BUTTON: text with ID -> sendChatIDToGroup chat_id=%d", id)
+				srv.sendChatIDToGroup(ctx, id)
+				return
+			}
+		}
+		// Запрос меню в группе: «start», «/start» или «@bot start» — показываем меню с кнопкой, если бот администратор.
+		if isGroupStartTrigger(trimmed) && srv.isBotAdminInChat(ctx, chatID) {
+			log.Printf("message_created GROUP: start trigger, bot is admin -> sendGroupMenu chat_id=%d", chatID)
+			srv.sendGroupMenu(ctx, chatID)
+		}
 		return
 	}
 
@@ -396,9 +721,10 @@ func (srv *Service) handleMessageCreated(ctx context.Context, raw json.RawMessag
 		return
 	}
 
-	// Обработка текстовых команд / меню
-	switch text {
-	case "/start", menuBackToMain:
+	// Обработка текстовых команд / меню (кнопка «НАЧАТЬ» может прийти как /start или start)
+	trimmedText := strings.TrimSpace(text)
+	switch trimmedText {
+	case "/start", "start", menuBackToMain:
 		srv.sendMainMenuMessage(ctx, chatKey)
 		return
 
@@ -408,6 +734,14 @@ func (srv *Service) handleMessageCreated(ctx context.Context, raw json.RawMessag
 
 	case menuExcludePhoneNumber:
 		srv.deleteContact(ctx, chatKey)
+		return
+
+	case menuShowChatID:
+		srv.sendChatIDMessage(ctx, chatKey, p.Recipient.ChatID)
+		return
+
+	case menuListChats:
+		srv.sendGroupChatsList(ctx, chatKey)
 		return
 	}
 
@@ -453,31 +787,99 @@ func (srv *Service) sendMainMenuMessage(ctx context.Context, chatID string) {
 	kb := keyboard{
 		Buttons: [][]keyboardButton{
 			{
-				{
-					Type:    "message",
-					Text:    menuNotificationSetting,
-					Payload: menuNotificationSetting,
-				},
+				{Type: "message", Text: menuShowChatID, Payload: menuShowChatID},
 			},
 			{
-				{
-					Type:    "message",
-					Text:    menuExcludePhoneNumber,
-					Payload: menuExcludePhoneNumber,
-				},
+				{Type: "message", Text: menuListChats, Payload: menuListChats},
 			},
 			{
-				{
-					Type:    "message",
-					Text:    menuBackToMain,
-					Payload: menuBackToMain,
-				},
+				{Type: "message", Text: menuNotificationSetting, Payload: menuNotificationSetting},
+			},
+			{
+				{Type: "message", Text: menuExcludePhoneNumber, Payload: menuExcludePhoneNumber},
+			},
+			{
+				{Type: "message", Text: menuBackToMain, Payload: menuBackToMain},
 			},
 		},
 	}
 
 	if err := srv.Bot.SendMessageWithKeyboard(ctx, chatID, text, kb, false); err != nil {
 		log.Printf("sendMainMenuMessage error: %v", err)
+	}
+}
+
+// sendMainMenuMessageByChatID отправляет главное меню в чат по chat_id (для диалога при bot_started, когда передан recipient.chat_id).
+func (srv *Service) sendMainMenuMessageByChatID(ctx context.Context, chatID int64) {
+	text := "Добро пожаловать!"
+	kb := keyboard{
+		Buttons: [][]keyboardButton{
+			{{Type: "message", Text: menuShowChatID, Payload: menuShowChatID}},
+			{{Type: "message", Text: menuListChats, Payload: menuListChats}},
+			{{Type: "message", Text: menuNotificationSetting, Payload: menuNotificationSetting}},
+			{{Type: "message", Text: menuExcludePhoneNumber, Payload: menuExcludePhoneNumber}},
+			{{Type: "message", Text: menuBackToMain, Payload: menuBackToMain}},
+		},
+	}
+	if err := srv.Bot.SendToChatByIDWithKeyboard(ctx, chatID, text, kb); err != nil {
+		log.Printf("sendMainMenuMessageByChatID error: %v", err)
+	}
+}
+
+// sendGroupChatsList отправляет в личный диалог список групповых чатов (название и ChatID) с клавиатурой главного меню.
+func (srv *Service) sendGroupChatsList(ctx context.Context, chatKey string) {
+	rows, err := srv.storage.GroupChats.All()
+	if err != nil {
+		log.Printf("sendGroupChatsList: GroupChats.All error: %v", err)
+		srv.sendMainMenuMessage(ctx, chatKey)
+		return
+	}
+	var b strings.Builder
+	b.WriteString("Список групповых чатов (название — ChatID):\n\n")
+	if len(rows) == 0 {
+		b.WriteString("Нет сохранённых групповых чатов. Добавьте бота в группу и нажмите «Покажи ID чата» в группе.")
+	} else {
+		for _, gc := range rows {
+			b.WriteString("• ")
+			b.WriteString(gc.Title)
+			b.WriteString(" — ")
+			b.WriteString(strconv.FormatInt(gc.ChatID, 10))
+			b.WriteString("\n")
+		}
+	}
+	text := b.String()
+	kb := keyboard{
+		Buttons: [][]keyboardButton{
+			{{Type: "message", Text: menuShowChatID, Payload: menuShowChatID}},
+			{{Type: "message", Text: menuListChats, Payload: menuListChats}},
+			{{Type: "message", Text: menuNotificationSetting, Payload: menuNotificationSetting}},
+			{{Type: "message", Text: menuExcludePhoneNumber, Payload: menuExcludePhoneNumber}},
+			{{Type: "message", Text: menuBackToMain, Payload: menuBackToMain}},
+		},
+	}
+	if err := srv.Bot.SendMessageWithKeyboard(ctx, chatKey, text, kb, false); err != nil {
+		log.Printf("sendGroupChatsList error: %v", err)
+	}
+}
+
+// sendChatIDMessage отправляет в чат (личный диалог) сообщение с ID чата и клавиатурой главного меню.
+// Два сообщения: подпись и отдельно число, чтобы длинный ID не обрезался интерфейсом.
+func (srv *Service) sendChatIDMessage(ctx context.Context, chatKey string, chatID int64) {
+	if err := srv.Bot.SendMessage(ctx, chatKey, 0, "ID этого чата:", false); err != nil {
+		log.Printf("sendChatIDMessage (caption) error: %v", err)
+		return
+	}
+	kb := keyboard{
+		Buttons: [][]keyboardButton{
+			{{Type: "message", Text: menuShowChatID, Payload: menuShowChatID}},
+			{{Type: "message", Text: menuNotificationSetting, Payload: menuNotificationSetting}},
+			{{Type: "message", Text: menuExcludePhoneNumber, Payload: menuExcludePhoneNumber}},
+			{{Type: "message", Text: menuBackToMain, Payload: menuBackToMain}},
+		},
+	}
+	idText := strconv.FormatInt(chatID, 10)
+	if err := srv.Bot.SendMessageWithKeyboard(ctx, chatKey, idText, kb, false); err != nil {
+		log.Printf("sendChatIDMessage (id) error: %v", err)
 	}
 }
 
@@ -695,12 +1097,22 @@ func (srv *Service) refreshGroupChats(ctx context.Context) error {
 // Если cleanMissing == true (по умолчанию), то после загрузки удаляет из БД те chatID,
 // которых больше нет в ответе GET /chats.
 func (srv *Service) RefreshGroupChats(ctx context.Context, cleanMissing ...bool) error {
+	return srv.refreshGroupChatsInternal(ctx, false, cleanMissing...)
+}
+
+// RefreshGroupChatsAndGreet обновляет кеш групп и отправляет приветствие
+// только для реально новых чатов (которые впервые вставились в БД).
+func (srv *Service) RefreshGroupChatsAndGreet(ctx context.Context, cleanMissing ...bool) error {
+	return srv.refreshGroupChatsInternal(ctx, true, cleanMissing...)
+}
+
+func (srv *Service) refreshGroupChatsInternal(ctx context.Context, greetNew bool, cleanMissing ...bool) error {
 	doClean := true
 	if len(cleanMissing) > 0 {
 		doClean = cleanMissing[0]
 	}
 
-	log.Printf("RefreshGroupChats: start (cleanMissing=%v)", doClean)
+	log.Printf("RefreshGroupChats: start (cleanMissing=%v, greetNew=%v)", doClean, greetNew)
 
 	client := http.Client{}
 	seen := make(map[int64]struct{}) // chatID, которые вернул MAX сейчас
@@ -740,19 +1152,44 @@ func (srv *Service) RefreshGroupChats(ctx context.Context, cleanMissing ...bool)
 			if ch.Type != "chat" {
 				continue
 			}
-
-			title := ch.Title
+			// GET /chats/{chatId} возвращает status: active | removed | left | closed — только active считаем актуальным.
+			info, err := srv.getChatInfo(ctx, ch.ChatID)
+			if err != nil {
+				log.Printf("RefreshGroupChats: skip chat_id=%d (getChatInfo: %v)", ch.ChatID, err)
+				continue
+			}
+			if info.Type != "chat" || info.Status != "active" {
+				if info.Status != "" && info.Status != "active" {
+					log.Printf("RefreshGroupChats: skip chat_id=%d status=%q", ch.ChatID, info.Status)
+				}
+				continue
+			}
+			title := info.Title
+			if title == "" {
+				title = ch.Title
+			}
 			if title == "" {
 				title = strconv.FormatInt(ch.ChatID, 10)
 			}
 
-			if _, err := srv.storage.GroupChats.Save(&tables.GroupChat{
+			inserted, err := srv.storage.GroupChats.Save(&tables.GroupChat{
 				ChatID: ch.ChatID,
 				Title:  title,
-			}); err != nil {
+			})
+			if err != nil {
 				log.Printf("group_chats save error chatID=%d title=%q: %v", ch.ChatID, title, err)
 			} else {
 				log.Printf("group_chats saved chatID=%d title=%q", ch.ChatID, title)
+				if greetNew && inserted {
+					srv.sendBotAddedGreeting(ctx, ch.ChatID)
+				} else if greetNew && !inserted {
+					// Чат уже был в БД — проверяем, не стал ли бот администратором: тогда отправим меню, если ещё не отправляли.
+					gc, _ := srv.storage.GroupChats.FindByChatID(ch.ChatID)
+					if gc != nil && !gc.MenuSent && srv.isBotAdminInChat(ctx, ch.ChatID) {
+						log.Printf("RefreshGroupChats: chat_id=%d — бот администратор, меню ещё не отправлялось, отправляем меню", ch.ChatID)
+						srv.sendGroupMenu(ctx, ch.ChatID)
+					}
+				}
 			}
 
 			seen[ch.ChatID] = struct{}{}
@@ -813,11 +1250,47 @@ func (srv *Service) cleanupMissingGroupChats(seen map[int64]struct{}) error {
 	return nil
 }
 
-// структура ответа GET /chats/{chatId}
+// структура ответа GET /chats/{chatId} (см. https://dev.max.ru/docs-api/methods/GET/chats/-chatId-)
 type chatInfo struct {
 	ChatID int64  `json:"chat_id"`
 	Type   string `json:"type"`
+	Status string `json:"status"` // active | removed | left | closed
 	Title  string `json:"title"`
+}
+
+// chatMembershipMe — ответ GET /chats/{chatId}/members/me (членство бота в групповом чате).
+type chatMembershipMe struct {
+	IsAdmin bool `json:"is_admin"`
+	IsOwner bool `json:"is_owner"`
+}
+
+// isBotAdminInChat возвращает true, если бот является администратором или владельцем группового чата.
+func (srv *Service) isBotAdminInChat(ctx context.Context, chatID int64) bool {
+	url := fmt.Sprintf("%s/chats/%d/members/me", srv.cfg.ApiBaseURL, chatID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		log.Printf("isBotAdminInChat: create request chat_id=%d: %v", chatID, err)
+		return false
+	}
+	req.Header.Set("Authorization", srv.cfg.BotToken)
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("isBotAdminInChat: request chat_id=%d: %v", chatID, err)
+		return false
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode >= http.StatusBadRequest {
+		log.Printf("isBotAdminInChat: chat_id=%d status=%d body=%s", chatID, resp.StatusCode, string(body))
+		return false
+	}
+	var m chatMembershipMe
+	if err := json.Unmarshal(body, &m); err != nil {
+		log.Printf("isBotAdminInChat: decode chat_id=%d: %v", chatID, err)
+		return false
+	}
+	return m.IsAdmin || m.IsOwner
 }
 
 // getChatInfo загружает информацию о чате по chatId

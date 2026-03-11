@@ -40,6 +40,12 @@ func (m *mockBot) SendToChatByID(ctx context.Context, chatID int64, text string)
 	return nil
 }
 
+func (m *mockBot) SendToChatByIDWithKeyboard(ctx context.Context, chatID int64, text string, kb keyboard) error {
+	m.lastChatID = strconv.FormatInt(chatID, 10)
+	m.lastText = text
+	return nil
+}
+
 // --- helper: in‑memory storage.Service ---
 
 func newTestStorage(t *testing.T) *storage.Service {
