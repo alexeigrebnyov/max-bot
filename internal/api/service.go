@@ -38,9 +38,8 @@ func (srv *Service) Start(ctx context.Context) {
 	http.Handle("/", &handlers.RootHandler{Bot: srv.Bot.BotModel})
 	http.Handle("/send-message", &handlers.SendMessageHandler{Bot: srv.Bot.BotModel})
 	http.Handle("/send-by-phone", &handlers.SendByPhoneHandler{Bot: srv.Bot.BotModel})
-	http.Handle("/send-to-group-by-title", &handlers.SendToGroupByTitleHandler{
-		Bot:     srv.Bot.BotModel,
-		Storage: srv.Storage,
+	http.Handle("/send-to-group-by-chatid", &handlers.SendToGroupByChatIdHandler{
+		Bot: srv.Bot.BotModel,
 	})
 	http.Handle("/refresh-group-chats", &handlers.RefreshGroupChatsHandler{
 		Bot: srv.Bot,

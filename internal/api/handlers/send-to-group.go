@@ -6,21 +6,19 @@ import (
 	"encoding/json"
 	"log"
 	"max-bot-service/internal/bot"
-	"max-bot-service/internal/storage"
 	"net/http"
 )
 
-type SendToGroupByTitleRequest struct {
-	Title string `json:"title"`
-	Text  string `json:"text"`
+type SendToGroupByChatIdRequest struct {
+	ChatID int64  `json:"chat_id"`
+	Text   string `json:"text"`
 }
 
-type SendToGroupByTitleHandler struct {
-	Bot     bot.BotClient
-	Storage *storage.Service
+type SendToGroupByChatIdHandler struct {
+	Bot bot.BotClient
 }
 
-func (h *SendToGroupByTitleHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (h *SendToGroupByChatIdHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
@@ -28,40 +26,27 @@ func (h *SendToGroupByTitleHandler) ServeHTTP(w http.ResponseWriter, r *http.Req
 
 	defer r.Body.Close()
 
-	var req SendToGroupByTitleRequest
+	var req SendToGroupByChatIdRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		log.Println("send-to-group-by-title: bad json:", err)
+		log.Println("send-to-group-by-chatid: bad json:", err)
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
-	log.Printf("send-to-group-by-title: incoming title=%q text=%q", req.Title, req.Text)
-
-	// ищем ChatId по Title
-	gc, err := h.Storage.GroupChats.FindByTitle(req.Title)
-	if err != nil {
-		log.Println("send-to-group-by-title: FindByTitle error:", err)
+	if req.ChatID == 0 {
+		log.Println("send-to-group-by-chatid: chat_id is required and must be non-zero")
 		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(map[string]string{
 			"status":  "error",
-			"message": "db error",
+			"message": "chat_id is required and must be non-zero",
 		})
 		return
 	}
 
-	if gc == nil {
-		log.Printf("send-to-group-by-title: no group chat found for title=%q", req.Title)
-		w.WriteHeader(http.StatusNotFound)
-		_ = json.NewEncoder(w).Encode(map[string]string{
-			"status":  "error",
-			"message": "group chat not found",
-		})
-		return
-	}
+	log.Printf("send-to-group-by-chatid: chat_id=%d text=%q", req.ChatID, req.Text)
 
-	// отправляем в MAX по ChatId
-	if err := h.Bot.SendToChatByID(r.Context(), gc.ChatID, req.Text); err != nil {
-		log.Println("send-to-group-by-title: SendToChatByID error:", err)
+	if err := h.Bot.SendToChatByID(r.Context(), req.ChatID, req.Text); err != nil {
+		log.Println("send-to-group-by-chatid: SendToChatByID error:", err)
 		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(map[string]string{
 			"status":  "error",
@@ -74,7 +59,6 @@ func (h *SendToGroupByTitleHandler) ServeHTTP(w http.ResponseWriter, r *http.Req
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"status":  "ok",
-		"chat_id": gc.ChatID,
-		"title":   gc.Title,
+		"chat_id": req.ChatID,
 	})
 }
