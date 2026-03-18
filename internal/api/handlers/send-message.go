@@ -30,14 +30,24 @@ func (handler *SendMessageHandler) ServeHTTP(w http.ResponseWriter, r *http.Requ
 	}
 
 	if err := decoder.Decode(&message); err != nil {
-		log.Println(err)
+		log.Printf("send-message: decode error: %v", err)
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"status":  "error",
+			"message": "invalid json: " + err.Error(),
+		})
 		return
 	}
 
 	if err := handler.Bot.SendMessage(r.Context(), message.Chat, message.Thread, message.Text, message.Private); err != nil {
-		log.Println(err)
+		log.Printf("send-message: SendMessage error: %v", err)
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"status":  "error",
+			"message": err.Error(),
+		})
 		return
 	}
 
@@ -77,16 +87,22 @@ func (handler *SendByPhoneHandler) ServeHTTP(w http.ResponseWriter, r *http.Requ
 
 	var req SendByPhoneRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		log.Println("send-by-phone: bad json:", err)
+		log.Printf("send-by-phone: bad json: %v", err)
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"status":  "error",
+			"message": "invalid json: " + err.Error(),
+		})
 		return
-	} // Декодирует JSON из тела в структуру SendByPhoneRequest.
+	}
 	//	Если JSON кривой или поля не совпадают — логирует ошибку и возвращает 400.
 
 	log.Printf("send-by-phone: incoming request phone=%s text=%q", req.Phone, req.Text)
 
 	if req.Phone == "" {
-		log.Println("send-by-phone: phone is required")
+		log.Printf("send-by-phone: phone is required")
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(map[string]string{
 			"status":  "error",
@@ -97,7 +113,7 @@ func (handler *SendByPhoneHandler) ServeHTTP(w http.ResponseWriter, r *http.Requ
 
 	// используем телефон как ключ, private = true
 	if err := handler.Bot.SendMessage(r.Context(), req.Phone, 0, req.Text, true); err != nil {
-		log.Println("send-by-phone: SendMessage error:", err)
+		log.Printf("send-by-phone: SendMessage error: %v", err)
 		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(map[string]string{
 			"status":  "error",

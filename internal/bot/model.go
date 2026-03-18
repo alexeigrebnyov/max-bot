@@ -83,6 +83,11 @@ func NewModel(contacts *tables.Contacts, cfg *config.Config) *Model {
 	}
 }
 
+// SetHTTPClient подменяет HTTP-клиент (для тестов).
+func (m *Model) SetHTTPClient(c *http.Client) {
+	m.httpClient = c
+}
+
 // структура под реальный формат /messages
 type sendMessageWithKbBody struct {
 	Text        string        `json:"text"`
@@ -162,9 +167,11 @@ func (m *Model) SendMessageWithKeyboard(ctx context.Context, chat string, text s
 		if err != nil {
 			return err
 		}
-		if contact != nil {
-			chat = strconv.FormatInt(contact.UserID, 10)
+		if contact == nil {
+			log.Printf("SendMessageWithKeyboard: no contact found for key=%s", chat)
+			return fmt.Errorf("contact not found for phone %q", chat)
 		}
+		chat = strconv.FormatInt(contact.UserID, 10)
 	}
 
 	chatID, err := strconv.ParseInt(chat, 10, 64)
@@ -209,7 +216,6 @@ func (m *Model) SendMessageWithKeyboard(ctx context.Context, chat string, text s
 	log.Printf("sendMessageWithKeyboard response: status=%d body=%s", resp.StatusCode, string(b))
 
 	if resp.StatusCode >= http.StatusBadRequest {
-		b, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("max api error: status %d, body=%s", resp.StatusCode, string(b))
 	}
 

@@ -4,6 +4,7 @@ package bot
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -37,8 +38,9 @@ type Service struct {
 
 func NewService(storage *storage.Service, cfg *config.Config) *Service {
 	return &Service{
-		storage: storage,
-		cfg:     cfg,
+		storage:       storage,
+		cfg:           cfg,
+		webhookSecret: cfg.WebhookSecret,
 	}
 }
 
@@ -67,6 +69,8 @@ func (srv *Service) Start(ctx context.Context) {
 		}
 		log.Printf("updates: using Long Polling (GET /updates)")
 		go srv.runPollLoop(ctx)
+	} else if srv.webhookSecret == "" {
+		log.Printf("webhook: WEBHOOK_SECRET is not set — webhook accepts any requests (set WEBHOOK_SECRET for production)")
 	}
 
 	// Периодический рефреш синхронизирует список групп с MAX.
@@ -100,10 +104,20 @@ func (srv *Service) WebhookHandler() http.HandlerFunc {
 			return
 		}
 
+		// Проверка X-Webhook-Secret: при заданном WEBHOOK_SECRET отклоняем запросы без совпадения заголовка
+		if srv.webhookSecret != "" {
+			got := r.Header.Get("X-Webhook-Secret")
+			if subtle.ConstantTimeCompare([]byte(got), []byte(srv.webhookSecret)) != 1 {
+				log.Printf("webhook: invalid or missing X-Webhook-Secret, request rejected")
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+		}
+
 		defer r.Body.Close()
 
 		body, _ := io.ReadAll(r.Body)
-		log.Printf("webhook: body_len=%d raw=%s", len(body), string(body))
+		log.Printf("webhook: body_len=%d", len(body))
 
 		var upd webhookUpdate
 		if err := json.Unmarshal(body, &upd); err != nil {
@@ -438,8 +452,8 @@ func (srv *Service) runPollLoop(ctx context.Context) {
 				preview = upd.Callback
 			}
 			msgPreview := string(preview)
-			if len(msgPreview) > 500 {
-				msgPreview = msgPreview[:500] + "..."
+			if len(msgPreview) > 200 {
+				msgPreview = msgPreview[:200] + "..."
 			}
 			log.Printf("long poll: update_type=%s message_len=%d callback_len=%d preview=%s", upd.UpdateType, len(upd.Message), len(upd.Callback), msgPreview)
 			switch upd.UpdateType {
@@ -569,7 +583,6 @@ func (srv *Service) handleMessageCallback(ctx context.Context, raw []byte) {
 		log.Printf("message_callback: empty callback/message (проверьте: 1) подписка webhook должна включать update_types message_callback; 2) для message_callback MAX присылает данные в поле callback, не message)")
 		return
 	}
-	log.Printf("message_callback RAW: %s", string(raw))
 
 	var payloadStr string
 	var chatID int64

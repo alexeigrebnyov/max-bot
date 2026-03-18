@@ -7,12 +7,15 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"testing"
 
 	"max-bot-service/internal/config"
 	"max-bot-service/internal/storage"
 	"max-bot-service/internal/storage/tables"
+
+	_ "modernc.org/sqlite"
 )
 
 // --- мок BotClient ---
@@ -57,7 +60,8 @@ func newTestStorage(t *testing.T) *storage.Service {
 	}
 
 	s := &storage.Service{
-		Contacts: tables.NewContacts(db),
+		Contacts:   tables.NewContacts(db),
+		GroupChats: tables.NewGroupChats(db),
 	}
 
 	t.Cleanup(func() { _ = db.Close() })
@@ -198,4 +202,56 @@ func TestSendMessageWithKeyboard_RequestShape(t *testing.T) {
 	if !bytes.Contains(body, []byte(`"text":"test"`)) {
 		t.Fatalf("unexpected body: %s", string(body))
 	}
+}
+
+// --- 4. Webhook: проверка X-Webhook-Secret ---
+
+func TestWebhookHandler_RequiresSecretWhenSet(t *testing.T) {
+	stor := newTestStorage(t)
+	cfg := &config.Config{
+		WebhookSecret: "test-secret-123",
+		ApiBaseURL:    "https://platform-api.max.ru",
+		BotToken:      "token",
+	}
+	srv := NewService(stor, cfg)
+	mb := &mockBot{}
+	srv.Bot = mb
+	handler := srv.WebhookHandler()
+
+	validBody := []byte(`{"update_type":"message_created","message":{"recipient":{"chat_id":1,"chat_type":"dialog"},"body":{"text":"/start"},"sender":{"user_id":23718629,"name":"Test"}}}`)
+
+	t.Run("no_header_returns_401", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/webhook", bytes.NewReader(validBody))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("expected 401, got %d", rec.Code)
+		}
+	})
+
+	t.Run("wrong_secret_returns_401", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/webhook", bytes.NewReader(validBody))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Webhook-Secret", "wrong")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("expected 401, got %d", rec.Code)
+		}
+	})
+
+	t.Run("correct_secret_returns_200", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/webhook", bytes.NewReader(validBody))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Webhook-Secret", "test-secret-123")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Errorf("expected 200, got %d", rec.Code)
+		}
+		if mb.lastChatID != "23718629" || mb.lastText != "Добро пожаловать!" {
+			t.Errorf("expected menu sent to 23718629, got chatID=%q text=%q", mb.lastChatID, mb.lastText)
+		}
+	})
 }

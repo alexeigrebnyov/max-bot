@@ -28,13 +28,19 @@ func (h *SendToGroupByChatIdHandler) ServeHTTP(w http.ResponseWriter, r *http.Re
 
 	var req SendToGroupByChatIdRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		log.Println("send-to-group-by-chatid: bad json:", err)
+		log.Printf("send-to-group-by-chatid: bad json: %v", err)
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"status":  "error",
+			"message": "invalid json: " + err.Error(),
+		})
 		return
 	}
 
 	if req.ChatID == 0 {
-		log.Println("send-to-group-by-chatid: chat_id is required and must be non-zero")
+		log.Printf("send-to-group-by-chatid: chat_id is required and must be non-zero")
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(map[string]string{
 			"status":  "error",
@@ -46,7 +52,8 @@ func (h *SendToGroupByChatIdHandler) ServeHTTP(w http.ResponseWriter, r *http.Re
 	log.Printf("send-to-group-by-chatid: chat_id=%d text=%q", req.ChatID, req.Text)
 
 	if err := h.Bot.SendToChatByID(r.Context(), req.ChatID, req.Text); err != nil {
-		log.Println("send-to-group-by-chatid: SendToChatByID error:", err)
+		log.Printf("send-to-group-by-chatid: SendToChatByID error: %v", err)
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(map[string]string{
 			"status":  "error",

@@ -20,7 +20,7 @@ func (h *RefreshGroupChatsHandler) ServeHTTP(w http.ResponseWriter, r *http.Requ
 	}
 
 	ctx := r.Context()
-	log.Println("refresh-group-chats: manual trigger")
+	log.Printf("refresh-group-chats: manual trigger")
 
 	if err := h.Bot.RefreshGroupChats(ctx); err != nil {
 		log.Printf("refresh-group-chats: error: %v", err)
