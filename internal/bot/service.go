@@ -814,7 +814,6 @@ func (srv *Service) handleMessageCreated(ctx context.Context, raw json.RawMessag
 	userID := p.Sender.UserID
 	name := p.Sender.Name
 	avatar := p.Sender.Avatar
-	chatID := p.Recipient.ChatID
 	chatType := p.Recipient.ChatType
 	text := p.Body.Text
 	payload := p.Payload // payload на верхнем уровне
@@ -822,90 +821,314 @@ func (srv *Service) handleMessageCreated(ctx context.Context, raw json.RawMessag
 		text = p.Body.Payload
 	}
 
-	// 1. Обработка команд (например, /start)
+	// Если это не личный диалог - отправляем в канал для SSE
+	if chatType != "dialog" {
+		if srv.NewMessages != nil {
+			msg := srv.convertToMessage(p)
+			select {
+			case srv.NewMessages <- msg:
+			default:
+				log.Printf("NewMessages channel full, dropping message")
+			}
+		}
+		return
+	}
+
+	chatKey := strconv.FormatInt(userID, 10)
 	trimmedText := strings.TrimSpace(text)
+
+	// Проверяем, есть ли активная сессия авторизации
+	session, err := srv.storage.AuthSessions.Get(userID)
+	if err != nil {
+		log.Printf("handleMessageCreated: AuthSessions.Get error: %v", err)
+	}
+
+	// Если есть активная сессия - обрабатываем в зависимости от состояния
+	if session != nil {
+		srv.handleAuthSession(ctx, session, userID, chatKey, trimmedText, name, avatar)
+		return
+	}
+
+	// Нет активной сессии - обрабатываем команду /start
 	if trimmedText == "/start" || trimmedText == "start" {
-		chatKey := strconv.FormatInt(userID, 10)
+		srv.handleStartCommand(ctx, userID, chatKey, payload, name, avatar)
+		return
+	}
 
-		// Проверяем наличие payload с emchash
-		if payload != "" && strings.HasPrefix(payload, "emchash_") {
-			// Извлекаем emchash из payload
-			emchash := strings.TrimPrefix(payload, "emchash_")
-			log.Printf("message_created: /start with emchash=%s userID=%d", emchash, userID)
+	// Если это не /start и нет сессии - игнорируем
+	log.Printf("handleMessageCreated: no session and not /start, ignoring message from userID=%d", userID)
+}
 
-			// Сохраняем/обновляем контакт по emchash
-			srv.saveContactByEMCHash(ctx, chatKey, userID, emchash, name, avatar)
+// handleStartCommand обрабатывает команду /start
+func (srv *Service) handleStartCommand(ctx context.Context, userID int64, chatKey string, payload string, name string, avatar string) {
+	// Вариант 1: Payload содержит emchash_{value}
+	if payload != "" && strings.HasPrefix(payload, "emchash_") {
+		emchash := strings.TrimPrefix(payload, "emchash_")
+		log.Printf("handleStartCommand: /start with emchash=%s userID=%d", emchash, userID)
+
+		// Ищем контакт по emchash
+		contact, err := srv.storage.Contacts.FindByEMCHash(emchash)
+		if err != nil {
+			log.Printf("handleStartCommand: FindByEMCHash error: %v", err)
+			srv.sendAuthError(ctx, chatKey)
 			return
 		}
 
-		// Если payload пустой — текущая логика (запрос телефона)
-		// --- ВАРИАНТ А: Только текст ---
-		// textMsg := "Отправьте, пожалуйста, Ваш номер телефона (просто текстом в ответ на это сообщение)"
-		// _ = srv.Bot.SendMessage(ctx, chatKey, 0, textMsg, false)
+		if contact == nil {
+			log.Printf("handleStartCommand: contact not found for emchash=%s", emchash)
+			srv.sendAuthError(ctx, chatKey)
+			return
+		}
 
-		// --- ВАРИАНТ Б: Кнопка "Отправить номер" (Рекомендуемый) ---
-		// Если нужно переключиться на текст — закомментируйте блок ниже и раскомментируйте Вариант А.
-		prompt := "Для регистрации, пожалуйста, нажмите кнопку ниже или просто напишите свой номер телефона."
+		// Контакт найден - создаём сессию и запрашиваем телефон
+		session := &tables.AuthSession{
+			UserID:   userID,
+			State:    "awaiting_phone_emchash",
+			EMCHash:  emchash,
+			Attempts: 0,
+		}
+
+		if err := srv.storage.AuthSessions.Save(session); err != nil {
+			log.Printf("handleStartCommand: AuthSessions.Save error: %v", err)
+			srv.sendAuthError(ctx, chatKey)
+			return
+		}
+
+		// Запрашиваем телефон
+		prompt := "Авторизуйтесь в системе укажите номер телефона"
 		kb := keyboard{
 			Buttons: [][]keyboardButton{
 				{{Type: "request_contact", Payload: "share_phone", Text: "📞 Отправить свой номер телефона"}},
 			},
 		}
 		_ = srv.Bot.SendMessageWithKeyboard(ctx, chatKey, prompt, kb, false)
-
 		return
 	}
 
-	if chatType != "dialog" {
+	// Вариант 2: Payload пустой - запрашиваем телефон
+	log.Printf("handleStartCommand: /start without payload, userID=%d", userID)
 
-    	    if srv.NewMessages != nil {
-                    // Преобразуем messageCreatedPayload в Message
-                    msg := srv.convertToMessage(p)
-                    select {
-                    case srv.NewMessages <- msg:
-                    default:
-                        log.Printf("NewMessages channel full, dropping message")
-                    }
-                }
-    		return
-    	}
-
-	// 2. Логика получения номера (срабатывает на ЛЮБОЕ сообщение)
-	var foundPhone string
- 	chatKey := strconv.FormatInt(chatID, 10)
-
-	// Пытаемся найти телефон в Attachments (если Max все же прислал объект контакта)
-	if len(p.Body.Attachments) > 0 {
-		for _, att := range p.Body.Attachments {
-			if att.Type == "contact" {
-				foundPhone = parsePhoneFromVCF(att.Payload.VCFInfo)
-				log.Printf("Phone found in attachments: %s", foundPhone)
-			}
-		}
+	session := &tables.AuthSession{
+		UserID:   userID,
+		State:    "awaiting_phone_empty",
+		Attempts: 0,
 	}
 
-	// Если в вложениях пусто, ищем телефон прямо в тексте сообщения (регуляркой или чисткой)
-	if foundPhone == "" && text != "" {
-		foundPhone = srv.extractPhoneFromText(text)
-		if foundPhone != "" {
-			log.Printf("Phone found in text: %s", foundPhone)
-		}
-
-
-	}
-
-	// 3. Если номер найден — сохраняем
-	if foundPhone != "" {
-		// Сохраняем/обновляем в БД
-		srv.saveContact(ctx, chatKey, userID, foundPhone, name, "", avatar)
+	if err := srv.storage.AuthSessions.Save(session); err != nil {
+		log.Printf("handleStartCommand: AuthSessions.Save error: %v", err)
+		srv.sendAuthError(ctx, chatKey)
 		return
 	}
 
-	// Если это личный чат и мы ничего не поняли — можно вежливо напомнить (опционально)
-	if chatType == "dialog" && trimmedText != "" {
-		log.Printf("No phone detected in message: %q", text)
+	// Запрашиваем телефон
+	prompt := "Авторизуйтесь в системе укажите номер телефона"
+	kb := keyboard{
+		Buttons: [][]keyboardButton{
+			{{Type: "request_contact", Payload: "share_phone", Text: "📞 Отправить свой номер телефона"}},
+		},
+	}
+	_ = srv.Bot.SendMessageWithKeyboard(ctx, chatKey, prompt, kb, false)
+}
+
+// handleAuthSession обрабатывает сообщения в рамках активной сессии авторизации
+func (srv *Service) handleAuthSession(ctx context.Context, session *tables.AuthSession, userID int64, chatKey string, text string, name string, avatar string) {
+	log.Printf("handleAuthSession: userID=%d state=%s attempts=%d", userID, session.State, session.Attempts)
+
+	switch session.State {
+	case "awaiting_phone_emchash":
+		srv.handleAwaitingPhoneEMCHash(ctx, session, userID, chatKey, text, name, avatar)
+	case "awaiting_phone_empty":
+		srv.handleAwaitingPhoneEmpty(ctx, session, userID, chatKey, text, name, avatar)
+	case "awaiting_birthdate":
+		srv.handleAwaitingBirthdate(ctx, session, userID, chatKey, text, name, avatar)
+	default:
+		log.Printf("handleAuthSession: unknown state=%s", session.State)
+		srv.storage.AuthSessions.Delete(userID)
+	}
+}
+
+// handleAwaitingPhoneEMCHash обрабатывает ввод телефона (вариант с emchash)
+func (srv *Service) handleAwaitingPhoneEMCHash(ctx context.Context, session *tables.AuthSession, userID int64, chatKey string, text string, name string, avatar string) {
+	// Извлекаем телефон из текста
+	phone := srv.extractPhoneFromText(text)
+	if phone == "" {
+		log.Printf("handleAwaitingPhoneEMCHash: invalid phone format")
+		session.Attempts++
+		if session.Attempts >= 3 {
+			log.Printf("handleAwaitingPhoneEMCHash: max attempts reached")
+			srv.storage.AuthSessions.Delete(userID)
+			srv.sendAuthError(ctx, chatKey)
+			return
+		}
+		srv.storage.AuthSessions.Save(session)
+		srv.Bot.SendMessage(ctx, chatKey, 0, "Неверный формат телефона. Попробуйте ещё раз.", false)
+		return
 	}
 
+	// Ищем контакт по emchash
+	contact, err := srv.storage.Contacts.FindByEMCHash(session.EMCHash)
+	if err != nil || contact == nil {
+		log.Printf("handleAwaitingPhoneEMCHash: contact not found")
+		srv.storage.AuthSessions.Delete(userID)
+		srv.sendAuthError(ctx, chatKey)
+		return
+	}
+
+	// Нормализуем телефоны для сравнения
+	normalizedInputPhone := tables.NormalizePhone(phone)
+	normalizedContactPhone := tables.NormalizePhone(contact.Phone)
+
+	// Сверяем телефон
+	if normalizedInputPhone != normalizedContactPhone {
+		log.Printf("handleAwaitingPhoneEMCHash: phone mismatch: got=%s expected=%s", normalizedInputPhone, normalizedContactPhone)
+		session.Attempts++
+		if session.Attempts >= 3 {
+			log.Printf("handleAwaitingPhoneEMCHash: max attempts reached")
+			srv.storage.AuthSessions.Delete(userID)
+			srv.sendAuthError(ctx, chatKey)
+			return
+		}
+		srv.storage.AuthSessions.Save(session)
+		srv.Bot.SendMessage(ctx, chatKey, 0, "Неверный номер телефона. Попробуйте ещё раз.", false)
+		return
+	}
+
+	// Телефон совпал - обновляем контакт
+	chatIDInt, _ := strconv.ParseInt(chatKey, 10, 64)
+	contact.UserID = userID
+	contact.ChatID = chatIDInt
+	contact.Name = name
+	contact.AvatarURL = avatar
+
+	if _, err := srv.storage.Contacts.Save(contact); err != nil {
+		log.Printf("handleAwaitingPhoneEMCHash: Save error: %v", err)
+		srv.storage.AuthSessions.Delete(userID)
+		srv.sendAuthError(ctx, chatKey)
+		return
+	}
+
+	// Успешная авторизация
+	srv.storage.AuthSessions.Delete(userID)
+	successText := "Авторизация успешна! Теперь вы можете получать уведомления."
+	kb := keyboard{
+		Buttons: [][]keyboardButton{
+			{{Type: "message", Text: menuBackToMain, Payload: menuBackToMain}},
+		},
+	}
+	srv.Bot.SendMessageWithKeyboard(ctx, chatKey, successText, kb, false)
+	log.Printf("handleAwaitingPhoneEMCHash: success for userID=%d emchash=%s", userID, session.EMCHash)
+}
+
+// handleAwaitingPhoneEmpty обрабатывает ввод телефона (вариант без payload)
+func (srv *Service) handleAwaitingPhoneEmpty(ctx context.Context, session *tables.AuthSession, userID int64, chatKey string, text string, name string, avatar string) {
+	// Извлекаем телефон из текста
+	phone := srv.extractPhoneFromText(text)
+	if phone == "" {
+		log.Printf("handleAwaitingPhoneEmpty: invalid phone format")
+		session.Attempts++
+		if session.Attempts >= 3 {
+			log.Printf("handleAwaitingPhoneEmpty: max attempts reached")
+			srv.storage.AuthSessions.Delete(userID)
+			srv.sendAuthError(ctx, chatKey)
+			return
+		}
+		srv.storage.AuthSessions.Save(session)
+		srv.Bot.SendMessage(ctx, chatKey, 0, "Неверный формат телефона. Попробуйте ещё раз.", false)
+		return
+	}
+
+	// Ищем контакт по телефону
+	contact, err := srv.storage.Contacts.Find(phone)
+	if err != nil || contact == nil {
+		log.Printf("handleAwaitingPhoneEmpty: contact not found for phone=%s", phone)
+		srv.storage.AuthSessions.Delete(userID)
+		srv.sendAuthError(ctx, chatKey)
+		return
+	}
+
+	// Контакт найден - переходим к запросу даты рождения
+	session.State = "awaiting_birthdate"
+	session.Phone = phone
+	session.Attempts = 0 // сбрасываем счётчик для нового этапа
+
+	if err := srv.storage.AuthSessions.Save(session); err != nil {
+		log.Printf("handleAwaitingPhoneEmpty: AuthSessions.Save error: %v", err)
+		srv.storage.AuthSessions.Delete(userID)
+		srv.sendAuthError(ctx, chatKey)
+		return
+	}
+
+	// Запрашиваем дату рождения
+	prompt := "Напишите дату Вашего рождения в формате дд.мм.гггг"
+	srv.Bot.SendMessage(ctx, chatKey, 0, prompt, false)
+}
+
+// handleAwaitingBirthdate обрабатывает ввод даты рождения
+func (srv *Service) handleAwaitingBirthdate(ctx context.Context, session *tables.AuthSession, userID int64, chatKey string, text string, name string, avatar string) {
+	// Парсим дату рождения
+	birthdate := srv.parseBirthdate(text)
+	if birthdate == "" {
+		log.Printf("handleAwaitingBirthdate: invalid birthdate format")
+		session.Attempts++
+		if session.Attempts >= 3 {
+			log.Printf("handleAwaitingBirthdate: max attempts reached")
+			srv.storage.AuthSessions.Delete(userID)
+			srv.sendAuthError(ctx, chatKey)
+			return
+		}
+		srv.storage.AuthSessions.Save(session)
+		srv.Bot.SendMessage(ctx, chatKey, 0, "Неверный формат даты. Используйте формат дд.мм.гггг (например, 01.01.1990). Попробуйте ещё раз.", false)
+		return
+	}
+
+	// Ищем контакт по телефону
+	contact, err := srv.storage.Contacts.Find(session.Phone)
+	if err != nil || contact == nil {
+		log.Printf("handleAwaitingBirthdate: contact not found")
+		srv.storage.AuthSessions.Delete(userID)
+		srv.sendAuthError(ctx, chatKey)
+		return
+	}
+
+	// Сверяем дату рождения
+	if birthdate != contact.Birthdate {
+		log.Printf("handleAwaitingBirthdate: birthdate mismatch: got=%s expected=%s", birthdate, contact.Birthdate)
+		session.Attempts++
+		if session.Attempts >= 3 {
+			log.Printf("handleAwaitingBirthdate: max attempts reached")
+			srv.storage.AuthSessions.Delete(userID)
+			srv.sendAuthError(ctx, chatKey)
+			return
+		}
+		srv.storage.AuthSessions.Save(session)
+		srv.Bot.SendMessage(ctx, chatKey, 0, "Неверная дата рождения. Попробуйте ещё раз.", false)
+		return
+	}
+
+	// Дата рождения совпала - обновляем контакт
+	chatIDInt, _ := strconv.ParseInt(chatKey, 10, 64)
+	contact.UserID = userID
+	contact.ChatID = chatIDInt
+	contact.Name = name
+	contact.AvatarURL = avatar
+
+	if _, err := srv.storage.Contacts.Save(contact); err != nil {
+		log.Printf("handleAwaitingBirthdate: Save error: %v", err)
+		srv.storage.AuthSessions.Delete(userID)
+		srv.sendAuthError(ctx, chatKey)
+		return
+	}
+
+	// Успешная авторизация
+	srv.storage.AuthSessions.Delete(userID)
+	successText := "Авторизация успешна! Теперь вы можете получать уведомления."
+	kb := keyboard{
+		Buttons: [][]keyboardButton{
+			{{Type: "message", Text: menuBackToMain, Payload: menuBackToMain}},
+		},
+	}
+	srv.Bot.SendMessageWithKeyboard(ctx, chatKey, successText, kb, false)
+	log.Printf("handleAwaitingBirthdate: success for userID=%d phone=%s", userID, session.Phone)
 }
 
 func parsePhoneFromVCF(vcf string) string {
@@ -1559,4 +1782,62 @@ func (srv *Service) extractPhoneFromText(input string) string {
 	return ""
 }
 
+// parseBirthdate парсит дату рождения в формате dd.mm.yyyy
+func (srv *Service) parseBirthdate(input string) string {
+	// Убираем пробелы
+	input = strings.TrimSpace(input)
 
+	// Оставляем только цифры и точки
+	var cleaned strings.Builder
+	for _, r := range input {
+		if (r >= '0' && r <= '9') || r == '.' {
+			cleaned.WriteRune(r)
+		}
+	}
+
+	result := cleaned.String()
+
+	// Проверяем формат dd.mm.yyyy (10 символов)
+	if len(result) != 10 {
+		return ""
+	}
+
+	parts := strings.Split(result, ".")
+	if len(parts) != 3 {
+		return ""
+	}
+
+	// Проверяем длину частей
+	if len(parts[0]) != 2 || len(parts[1]) != 2 || len(parts[2]) != 4 {
+		return ""
+	}
+
+	// Проверяем, что все части - числа
+	day, err1 := strconv.Atoi(parts[0])
+	month, err2 := strconv.Atoi(parts[1])
+	year, err3 := strconv.Atoi(parts[2])
+
+	if err1 != nil || err2 != nil || err3 != nil {
+		return ""
+	}
+
+	// Базовая валидация
+	if day < 1 || day > 31 || month < 1 || month > 12 || year < 1900 || year > 2100 {
+		return ""
+	}
+
+	return result
+}
+
+// sendAuthError отправляет сообщение об ошибке авторизации
+func (srv *Service) sendAuthError(ctx context.Context, chatKey string) {
+	text := "Пользователь не найден в системе"
+	kb := keyboard{
+		Buttons: [][]keyboardButton{
+			{{Type: "message", Text: menuBackToMain, Payload: menuBackToMain}},
+		},
+	}
+	if err := srv.Bot.SendMessageWithKeyboard(ctx, chatKey, text, kb, false); err != nil {
+		log.Printf("sendAuthError: send error: %v", err)
+	}
+}

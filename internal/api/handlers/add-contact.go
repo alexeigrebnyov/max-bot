@@ -23,6 +23,7 @@ type addContactRequest struct {
 	EMC       string `json:"emc"`
 	AvatarURL string `json:"avatar_url"`
 	EMCHash   string `json:"emchash"`
+	Birthdate string `json:"birthdate"` // формат: dd.mm.yyyy
 }
 
 func (h *AddContactHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -53,6 +54,7 @@ func (h *AddContactHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		EMC:       req.EMC,
 		AvatarURL: req.AvatarURL,
 		EMCHash:   req.EMCHash,
+		Birthdate: req.Birthdate,
 	}
 
 	_, err := h.Contacts.Save(contact)
@@ -95,6 +97,7 @@ func (h *UpdateContactHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		EMC:       req.EMC,
 		AvatarURL: req.AvatarURL,
 		EMCHash:   req.EMCHash,
+		Birthdate: req.Birthdate,
 	}
 
 	cont, err := h.Contacts.UpdateByPhone(contact)
