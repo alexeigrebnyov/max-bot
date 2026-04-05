@@ -282,8 +282,12 @@
             const chatId = contact.ChatID;
             const phone = contact.Phone;
             const userId = contact.UserID;
-            const name = contact.Name ||phone ;
-            const avatar = (phone ? phone.slice(-2) : userId.toString().slice(-2)).toUpperCase();
+            const name = contact.Name || phone;
+            const emc = contact.EMC || '';
+            const avatarUrl = contact.AvatarURL || '';
+
+            // Для иконки показываем EMC если есть, иначе последние 2 цифры телефона
+            const avatarText = emc || (phone ? phone.slice(-2) : userId.toString().slice(-2)).toUpperCase();
 
             contactsMap.set(chatId, contact);
            loadAllMessages(chatId)
@@ -296,15 +300,21 @@
             }
             div.setAttribute('data-chat-id', chatId);
             div.setAttribute('data-user-id', userId);
+
+            // Если есть avatar_url, показываем картинку, иначе текст
+            const avatarHtml = avatarUrl
+                ? `<img src="${escapeHtml(avatarUrl)}" alt="${escapeHtml(name)}" style="width:48px;height:48px;border-radius:50%;object-fit:cover;">`
+                : `<div class="avatar">${avatarText}</div>`;
+
             div.innerHTML = `
-                <div class="avatar">${avatar}</div>
+                ${avatarHtml}
                 <div class="contact-info">
                     <div class="contact-name">${escapeHtml(name)}</div>
                     <div class="contact-preview" id="preview-${chatId}">—</div>
                 </div>
                 <div class="contact-time" id="time-${chatId}"></div>
             `;
-            div.addEventListener('click', () => openChat(chatId, userId, phone, name));
+            div.addEventListener('click', () => openChat(chatId, userId, phone, name, contact.Birthdate, emc, avatarUrl));
             container.appendChild(div);
         });
 
@@ -315,7 +325,7 @@
     }
 
     // Открыть чат с контактом
-    async function openChat(chatId, userId, phone, name) {
+    async function openChat(chatId, userId, phone, name, birthdate, emc, avatarUrl) {
         currentChatId = chatId;
         currentUserId = userId;
 
@@ -328,9 +338,21 @@
         // Показать заголовок и поле ввода
         document.getElementById('chat-header').style.display = 'flex';
         document.getElementById('input-area').style.display = 'flex';
-        document.getElementById('chat-avatar').textContent = (phone ? phone.slice(-2) : userId.toString().slice(-2)).toUpperCase();
+
+        // Аватар в хедере
+        const chatAvatarEl = document.getElementById('chat-avatar');
+        if (avatarUrl) {
+            chatAvatarEl.innerHTML = `<img src="${escapeHtml(avatarUrl)}" alt="${escapeHtml(name)}" style="width:48px;height:48px;border-radius:50%;object-fit:cover;">`;
+        } else {
+            const avatarText = emc || (phone ? phone.slice(-2) : userId.toString().slice(-2)).toUpperCase();
+            chatAvatarEl.textContent = avatarText;
+        }
+
+        // Имя, дата рождения и телефон
         document.getElementById('chat-name').textContent = name;
-        document.getElementById('chat-phone').textContent = phone || `User ID: ${userId}`;
+        const phoneText = phone || `User ID: ${userId}`;
+        const birthdateText = birthdate ? ` • ДР: ${birthdate}` : '';
+        document.getElementById('chat-phone').textContent = phoneText + birthdateText;
 
         // Загрузить историю сообщений
         await loadMessages(chatId);

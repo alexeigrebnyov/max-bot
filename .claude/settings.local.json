@@ -1,0 +1,38 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(docker-compose config:*)",
+      "Bash(docker-compose logs:*)",
+      "Bash(docker-compose up:*)",
+      "Bash(docker-compose ps:*)",
+      "Bash(docker pull:*)",
+      "Bash(docker-compose exec backend python -c:*)",
+      "Bash(docker version:*)",
+      "mcp__mssql-mcp-server__describe_table",
+      "mcp__mssql-mcp-server__execute_query",
+      "Bash(sleep 25 && curl -s -o /dev/null -w \"%{http_code}\" http://localhost:8080/api/data/tables 2>&1)",
+      "mcp__mssql-mcp-server__list_views",
+      "Bash(cd \"C:/Users/Grebnev_A/IdeaProjects/medialog-web-backend\" && javac -encoding UTF-8 SqlMermaidParser.java && java SqlMermaidParser)",
+      "Bash(ls -lh \"C:\\\\Users\\\\Grebnev_A\\\\IdeaProjects\\\\medialog-web-backend\\\\src\\\\main\\\\resources\\\\legacy-configs\"/*.HED | head -10)",
+      "Bash(cd \"C:\\\\Users\\\\Grebnev_A\\\\IdeaProjects\\\\medialog-web-backend\" && mvn compile -q)",
+      "Bash(cd \"C:\\\\Users\\\\Grebnev_A\\\\IdeaProjects\\\\medialog-web-backend\" && mvn compile -q 2>&1 | tail -20)",
+      "Bash(cd \"C:\\\\Users\\\\Grebnev_A\\\\IdeaProjects\\\\medialog-web-backend\" && mvn compile -q && java -cp \"target/classes\" com.example.medialog_web_backend.test.TestHedParser)",
+      "Bash(xxd -l 2000 \"C:\\\\Users\\\\Grebnev_A\\\\IdeaProjects\\\\medialog-web-backend\\\\src\\\\main\\\\resources\\\\legacy-configs\\\\T11355.HED\" | head -100)",
+      "Bash(xxd \"C:\\\\Users\\\\Grebnev_A\\\\IdeaProjects\\\\medialog-web-backend\\\\src\\\\main\\\\resources\\\\legacy-configs\\\\T11355.HED\" | grep -A5 -B5 \"PATIENTS\")",
+      "Bash(xxd \"C:\\\\Users\\\\Grebnev_A\\\\IdeaProjects\\\\medialog-web-backend\\\\src\\\\main\\\\resources\\\\legacy-configs\\\\T11355.HED\" | grep -A2 \"3ec0\")",
+      "Bash(python3 << 'EOF'\n# Анализ структуры блока 0x3E\ndata = bytes.fromhex\\(\"3ec00d000e00f83f07009a0101003f3f003fc0110e007bd2e5eaf3f9e0ff20e4e0f2e07d\"\\)\n\nprint\\(\"Анализ блока 0x3E:\"\\)\nprint\\(f\"Маркер: 0x{data[0]:02X} 0x{data[1]:02X}\"\\)\nprint\\(f\"Размер блока \\(little-endian\\): 0x{data[2]:02X}{data[3]:02X} = {data[2] + data[3]*256}\"\\)\nprint\\(f\"Следующие байты: {' '.join\\(f'{b:02X}' for b in data[4:14]\\)}\"\\)\nprint\\(f\"\\\\nТекст начинается с позиции ~14:\"\\)\ntext_bytes = data[14:]\nprint\\(f\"Hex: {' '.join\\(f'{b:02X}' for b in text_bytes\\)}\"\\)\ntry:\n    text = text_bytes.decode\\('windows-1251'\\)\n    print\\(f\"Текст \\(CP1251\\): {text}\"\\)\nexcept:\n    print\\(\"Ошибка декодирования\"\\)\nEOF)",
+      "Read(//cygdrive/c/Users/Grebnev_A/IdeaProjects/**)",
+      "Bash(./mvnw compile:*)",
+      "Bash(cd \"C:\\\\Users\\\\Grebnev_A\\\\IdeaProjects\\\\medialog-web-backend\" && xxd src/main/resources/legacy-configs/T11355.HED | grep -i \"d1ef f0e0e2ea e0\" | head -5)",
+      "Bash(cd \"C:\\\\Users\\\\Grebnev_A\\\\IdeaProjects\\\\medialog-web-backend\" && python3 -c \"\ntext = 'Справка выдана'\ncp1251_bytes = text.encode\\('cp1251'\\)\nprint\\('CP1251 hex:', ' '.join\\(f'{b:02x}' for b in cp1251_bytes\\)\\)\nprint\\('Searching for this pattern in HED file...'\\)\n\")",
+      "Bash(cd \"C:\\\\Users\\\\Grebnev_A\\\\IdeaProjects\\\\medialog-web-backend\" && ./mvnw compile -q && ./mvnw exec:java -Dexec.mainClass=\"com.example.medialog_web_backend.test.TestHedParser\" -q)",
+      "Bash(cd \"C:\\\\Users\\\\Grebnev_A\\\\IdeaProjects\\\\medialog-web-backend\" && ./mvnw compile -q && ./mvnw exec:java -Dexec.mainClass=\"com.example.medialog_web_backend.test.DebugHedParser\" -q)",
+      "Bash(go build:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(docker build:*)",
+      "Bash(docker run:*)",
+      "Bash(winpty docker:*)"
+    ]
+  }
+}

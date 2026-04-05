@@ -993,11 +993,10 @@ func (srv *Service) handleAwaitingPhoneEMCHash(ctx context.Context, session *tab
 		return
 	}
 
-	// Телефон совпал - обновляем контакт
+	// Телефон совпал - обновляем только UserID, ChatID и AvatarURL
 	chatIDInt, _ := strconv.ParseInt(chatKey, 10, 64)
 	contact.UserID = userID
 	contact.ChatID = chatIDInt
-	contact.Name = name
 	contact.AvatarURL = avatar
 
 	if _, err := srv.storage.Contacts.Save(contact); err != nil {
@@ -1105,11 +1104,10 @@ func (srv *Service) handleAwaitingBirthdate(ctx context.Context, session *tables
 		return
 	}
 
-	// Дата рождения совпала - обновляем контакт
+	// Дата рождения совпала - обновляем только UserID, ChatID и AvatarURL
 	chatIDInt, _ := strconv.ParseInt(chatKey, 10, 64)
 	contact.UserID = userID
 	contact.ChatID = chatIDInt
-	contact.Name = name
 	contact.AvatarURL = avatar
 
 	if _, err := srv.storage.Contacts.Save(contact); err != nil {
