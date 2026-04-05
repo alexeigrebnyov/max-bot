@@ -99,8 +99,9 @@ func (table *Contacts) Save(contact *Contact) (bool, error) {
 	phone := normalizePhone(contact.Phone)
 
 	res, err := table.database.Exec(
-		"UPDATE contacts SET chatID = ?, phone = ?, name=?, emc=?, avatar_url=?, emchash=?, birthdate=? WHERE userID = ?",
-		contact.ChatID, phone, contact.Name, contact.EMC, contact.AvatarURL, contact.EMCHash, contact.Birthdate, contact.UserID,
+		"UPDATE contacts SET userID = ? chatID = ?, avatar_url=? WHERE phone = ? ",
+		contact.UserID, contact.ChatID,  contact.AvatarURL, phone
+		)
 	)
 	if err != nil {
 		return false, err
