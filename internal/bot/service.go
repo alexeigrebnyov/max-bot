@@ -218,23 +218,24 @@ func (srv *Service) handleBotStarted(ctx context.Context, raw []byte) {
 		return
 	}
 
-	// Личный диалог: показываем меню. Источник идентификатора чата может быть разным в зависимости от payload MAX.
+	// Личный диалог: запускаем процесс авторизации
 	var chatKey string
 	if p.User.UserID != 0 {
 		chatKey = strconv.FormatInt(p.User.UserID, 10)
 		log.Printf("bot_started: user_id=%d (from user)", p.User.UserID)
-		srv.sendMainMenuMessage(ctx, chatKey)
+		srv.handleStartCommand(ctx, p.User.UserID, chatKey, p.Payload, p.User.Name, p.User.Avatar)
+		return
+	}
+	if p.Recipient.ChatType == "dialog" && p.Recipient.UserID != 0 {
+		chatKey = strconv.FormatInt(p.Recipient.UserID, 10)
+		log.Printf("bot_started: user_id=%d (from recipient)", p.Recipient.UserID)
+		srv.handleStartCommand(ctx, p.Recipient.UserID, chatKey, p.Payload, p.User.Name, p.User.Avatar)
 		return
 	}
 	if p.Recipient.ChatType == "dialog" && p.Recipient.ChatID != 0 {
-		log.Printf("bot_started: chat_id=%d (from recipient, dialog)", p.Recipient.ChatID)
+		log.Printf("bot_started: chat_id=%d (from recipient, dialog) - cannot determine userID", p.Recipient.ChatID)
+		// Не можем определить userID, отправляем просто меню
 		srv.sendMainMenuMessageByChatID(ctx, p.Recipient.ChatID)
-		return
-	}
-	if p.Recipient.UserID != 0 {
-		chatKey = strconv.FormatInt(p.Recipient.UserID, 10)
-		log.Printf("bot_started: user_id=%d (from recipient)", p.Recipient.UserID)
-		srv.sendMainMenuMessage(ctx, chatKey)
 		return
 	}
 	log.Printf("bot_started: no user_id or chat_id in payload (user=%+v recipient=%+v)", p.User, p.Recipient)
@@ -814,6 +815,7 @@ func (srv *Service) handleMessageCreated(ctx context.Context, raw json.RawMessag
 	userID := p.Sender.UserID
 	name := p.Sender.Name
 	avatar := p.Sender.Avatar
+	log.Printf("handleMessageCreated: userID=%d name=%s avatar=%s", userID, name, avatar)
 	chatType := p.Recipient.ChatType
 	text := p.Body.Text
 	payload := p.Payload // payload на верхнем уровне
