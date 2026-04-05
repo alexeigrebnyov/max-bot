@@ -67,11 +67,74 @@ type sendMessageWithKeyboardRequest struct {
 	Keyboard keyboard       `json:"keyboard"`
 }
 
+// MessagesResponse — обёртка над списком сообщений.
+type MessagesResponse struct {
+	Messages []Message `json:"messages"`
+}
+
+// Message — полная структура сообщения.
+type Message struct {
+	Recipient Recipient `json:"recipient"`
+	Timestamp int64     `json:"timestamp"`
+	Body      Body      `json:"body"`
+	Sender    Sender    `json:"sender"`
+}
+
+// Recipient — получатель сообщения.
+type Recipient struct {
+	ChatID   int64  `json:"chat_id"`
+	ChatType string `json:"chat_type"`
+	UserID   int64  `json:"user_id"`
+}
+
+// Body — тело сообщения.
+type Body struct {
+	Mid         string       `json:"mid"`
+	Seq         int64        `json:"seq"`
+	Text        string       `json:"text"`
+	Attachments []Attachment `json:"attachments,omitempty"`
+}
+
+// Attachment — вложение.
+type Attachment struct {
+	Payload AttachmentPayload `json:"payload"`
+	Type    string            `json:"type"`
+}
+
+// AttachmentPayload — содержимое вложения.
+type AttachmentPayload struct {
+	MaxInfo MaxInfo `json:"max_info"`
+	VCFInfo string  `json:"vcf_info,omitempty"` // если будет в будущем
+}
+
+// MaxInfo — данные о контакте (при type = "contact").
+type MaxInfo struct {
+	UserID           int64  `json:"user_id"`
+	FirstName        string `json:"first_name"`
+	LastName         string `json:"last_name"`
+	IsBot            bool   `json:"is_bot"`
+	LastActivityTime int64  `json:"last_activity_time"`
+	Name             string `json:"name"`
+}
+
+// Sender — отправитель сообщения.
+type Sender struct {
+	UserID           int64  `json:"user_id"`
+	FirstName        string `json:"first_name"`
+	LastName         string `json:"last_name"`
+	IsBot            bool   `json:"is_bot"`
+	LastActivityTime int64  `json:"last_activity_time"`
+	Name             string `json:"name"`
+}
+
+
 type BotClient interface {
 	SendMessage(ctx context.Context, chat string, thread int, text string, private bool) error
 	SendMessageWithKeyboard(ctx context.Context, chat string, text string, kb keyboard, private bool) error
 	SendToChatByID(ctx context.Context, chatID int64, text string) error
 	SendToChatByIDWithKeyboard(ctx context.Context, chatID int64, text string, kb keyboard) error
+	GetChatMessages(ctx context.Context, chatID string)  ([]Message, error)
+	GetStructuredMessage(chatID int64, text string) *Message
 }
 
 func NewModel(contacts *tables.Contacts, cfg *config.Config) *Model {
@@ -332,4 +395,75 @@ func (m *Model) SendToChatByID(ctx context.Context, chatID int64, text string) e
 	}
 
 	return nil
+}
+
+func (m *Model) GetStructuredMessage(chatID int64, text string) *Message {
+    return &Message{
+                                          Recipient: Recipient{
+                                              ChatID:   chatID,
+                                              ChatType: "",
+                                              UserID:   '0',
+                                          },
+                                          Timestamp: time.Now().UnixMilli(), // реальный timestamp из p? У нас его нет в messageCreatedPayload, можно взять текущий
+                                          Body: Body{
+                                              Mid:         "",
+                                              Seq:         '0',
+                                              Text:        text,
+                                  //             Attachments: convertAttachments(p.Body.Attachments),
+                                          },
+                                          Sender: Sender{
+                                              UserID: '0',
+                                              Name:   "",
+                                          },
+    }
+}
+
+
+
+// getChatInfo загружает сообщения чата по chatId
+func (m *Model) GetChatMessages(ctx context.Context, chatID string)  ([]Message, error) {
+	client := http.Client{}
+
+	url := fmt.Sprintf("%s/messages?chat_id=%s", m.apiBase, chatID)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create chat messages request: %w", err)
+	}
+
+	req.Header.Set("Authorization", m.token)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("do chat messages request: %w", err)
+	}
+
+	defer resp.Body.Close()
+
+    body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read body: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("max api error: status %d, body=%s", resp.StatusCode, string(body))
+	}
+
+	// Если тело пустое, возвращаем пустой список
+	if len(body) == 0 {
+		return []Message{}, nil
+	}
+
+	var msgs MessagesResponse
+	if err := json.Unmarshal(body, &msgs); err != nil {
+		return nil, fmt.Errorf("decode response: %w (body: %s)", err, string(body))
+	}
+	return msgs.Messages, nil
+
+// 	var info MessagesResponse
+// 	if err := json.Unmarshal(body, &info); err != nil {
+// 		return nil, fmt.Errorf("decode chat messages response: %w", err)
+// 	}
+//
+// 	return &info, nil
 }

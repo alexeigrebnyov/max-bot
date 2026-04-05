@@ -34,6 +34,7 @@ type Service struct {
 	Bot           BotClient
 	webhookSecret string
 	cfg           *config.Config
+	NewMessages chan *Message
 }
 
 func NewService(storage *storage.Service, cfg *config.Config) *Service {
@@ -52,6 +53,7 @@ func (srv *Service) UseLongPolling() bool {
 func (srv *Service) Start(ctx context.Context) {
 	srv.BotModel = NewModel(srv.storage.Contacts, srv.cfg)
 	srv.Bot = srv.BotModel
+	srv.NewMessages = make(chan *Message, 100)
 
 	if err := srv.BotModel.FillInfo(ctx); err != nil {
 		log.Printf("failed to load bot info: %v", err)
@@ -170,7 +172,10 @@ type botStartedPayload struct {
 	User struct {
 		UserID int64  `json:"user_id"`
 		Name   string `json:"name"`
+		Avatar   string `json:"avatar_url"`
 	} `json:"user"`
+
+	Payload string `json:"payload"`
 }
 
 func (srv *Service) handleBotStarted(ctx context.Context, raw []byte) {
@@ -179,6 +184,8 @@ func (srv *Service) handleBotStarted(ctx context.Context, raw []byte) {
 		log.Printf("bot_started: parse error: %v", err)
 		return
 	}
+
+	log.Printf("{UserID:%d, Name:%s, Avatar:%s, Payload:%s}", p.User.UserID, p.User.Name, p.User.Avatar, p.Payload)
 
 	// Если бота добавили в групповой чат — сохраняем чат в БД и показываем меню с кнопкой (если бот администратор).
 	if p.Recipient.ChatType == "chat" && p.Recipient.ChatID != 0 {
@@ -468,6 +475,7 @@ func (srv *Service) runPollLoop(ctx context.Context) {
 			case "bot_started":
 				// У bot_started payload на верхнем уровне (recipient, user), не в message.
 				srv.handleBotStarted(ctx, rawUpd)
+//                 srv.handleMessageCreated(ctx, upd.Message)
 			case "bot_added":
 				srv.handleBotAdded(ctx, rawUpd)
 			default:
@@ -643,7 +651,7 @@ func (srv *Service) handleMessageCallback(ctx context.Context, raw []byte) {
 // а просто считать, что если в new_chat_members есть хотя бы один бот,
 // значит добавили и нашего (это корректно, если нет сценариев,
 // где в чат добавляют сторонних ботов).
-func (srv *Service) handleMessageCreated(ctx context.Context, raw json.RawMessage) {
+func (srv *Service) handleMessageCreatedOld(ctx context.Context, raw json.RawMessage) {
 	var p messageCreatedPayload
 	if err := json.Unmarshal(raw, &p); err != nil {
 		log.Printf("message_created: parse error: %v", err)
@@ -653,10 +661,12 @@ func (srv *Service) handleMessageCreated(ctx context.Context, raw json.RawMessag
 	// Для личного диалога используем user_id отправителя
 	// userId отправителя (ты)
 	userID := p.Sender.UserID // 23718629
+	name := p.Sender.Name // 23718629
 	// chatId диалога
 	chatID := p.Recipient.ChatID     // 174132016
 	chatType := p.Recipient.ChatType // "dialog"
 	text := p.Body.Text
+	emc := ""
 	if text == "" && p.Body.Payload != "" {
 		text = p.Body.Payload // при нажатии кнопки MAX может присылать только payload
 	}
@@ -730,9 +740,19 @@ func (srv *Service) handleMessageCreated(ctx context.Context, raw json.RawMessag
 
 	// 2) Для дальнейшей логики будем считать chatKey = userID (для личных диалогов)
 	chatKey := strconv.FormatInt(userID, 10)
-	if chatType != "dialog" {
-		return
-	}
+// 	if chatType != "dialog" {
+
+	    if srv.NewMessages != nil {
+                // Преобразуем messageCreatedPayload в Message
+                msg := srv.convertToMessage(p)
+                select {
+                case srv.NewMessages <- msg:
+                default:
+                    log.Printf("NewMessages channel full, dropping message")
+                }
+            }
+// 		return
+// 	}
 
 	// Обработка текстовых команд / меню (кнопка «НАЧАТЬ» может прийти как /start или start)
 	trimmedText := strings.TrimSpace(text)
@@ -772,11 +792,104 @@ func (srv *Service) handleMessageCreated(ctx context.Context, raw json.RawMessag
 				}
 
 				// chatKey мы уже посчитали как userID отправителя
-				srv.saveContact(ctx, chatKey, att.Payload.MaxInfo.UserID, phone)
+				srv.saveContact(ctx, chatKey, att.Payload.MaxInfo.UserID, phone, name, emc)
 				return
 			}
 		}
 	}
+
+
+}
+
+func (srv *Service) handleMessageCreated(ctx context.Context, raw json.RawMessage) {
+	var p messageCreatedPayload
+	if err := json.Unmarshal(raw, &p); err != nil {
+		log.Printf("message_created: parse error: %v", err)
+		return
+	}
+
+	userID := p.Sender.UserID
+	name := p.Sender.Name
+	chatID := p.Recipient.ChatID
+	chatType := p.Recipient.ChatType
+	text := p.Body.Text
+	emc := ""
+	if text == "" && p.Body.Payload != "" {
+		text = p.Body.Payload
+	}
+
+	// 1. Обработка команд (например, /start)
+	trimmedText := strings.TrimSpace(text)
+	if trimmedText == "/start" || trimmedText == "start" {
+		chatKey := strconv.FormatInt(userID, 10)
+
+		// --- ВАРИАНТ А: Только текст ---
+		// textMsg := "Отправьте, пожалуйста, Ваш номер телефона (просто текстом в ответ на это сообщение)"
+		// _ = srv.Bot.SendMessage(ctx, chatKey, 0, textMsg, false)
+
+		// --- ВАРИАНТ Б: Кнопка "Отправить номер" (Рекомендуемый) ---
+		// Если нужно переключиться на текст — закомментируйте блок ниже и раскомментируйте Вариант А.
+		prompt := "Для регистрации, пожалуйста, нажмите кнопку ниже или просто напишите свой номер телефона."
+		kb := keyboard{
+			Buttons: [][]keyboardButton{
+				{{Type: "request_contact", Payload: "share_phone", Text: "📞 Отправить свой номер телефона"}},
+			},
+		}
+		_ = srv.Bot.SendMessageWithKeyboard(ctx, chatKey, prompt, kb, false)
+
+		return
+	}
+
+	if chatType != "dialog" {
+
+    	    if srv.NewMessages != nil {
+                    // Преобразуем messageCreatedPayload в Message
+                    msg := srv.convertToMessage(p)
+                    select {
+                    case srv.NewMessages <- msg:
+                    default:
+                        log.Printf("NewMessages channel full, dropping message")
+                    }
+                }
+    		return
+    	}
+
+	// 2. Логика получения номера (срабатывает на ЛЮБОЕ сообщение)
+	var foundPhone string
+ 	chatKey := strconv.FormatInt(chatID, 10)
+
+	// Пытаемся найти телефон в Attachments (если Max все же прислал объект контакта)
+	if len(p.Body.Attachments) > 0 {
+		for _, att := range p.Body.Attachments {
+			if att.Type == "contact" {
+				foundPhone = parsePhoneFromVCF(att.Payload.VCFInfo)
+				log.Printf("Phone found in attachments: %s", foundPhone)
+			}
+		}
+	}
+
+	// Если в вложениях пусто, ищем телефон прямо в тексте сообщения (регуляркой или чисткой)
+	if foundPhone == "" && text != "" {
+		foundPhone = srv.extractPhoneFromText(text)
+		if foundPhone != "" {
+			log.Printf("Phone found in text: %s", foundPhone)
+		}
+
+
+	}
+
+	// 3. Если номер найден — сохраняем
+	if foundPhone != "" {
+		// Сохраняем/обновляем в БД
+		srv.saveContact(ctx, chatKey, userID, foundPhone, name, emc)
+		return
+	}
+
+	// Если это личный чат и мы ничего не поняли — можно вежливо напомнить (опционально)
+	if chatType == "dialog" && trimmedText != "" {
+		log.Printf("No phone detected in message: %q", text)
+	}
+
 }
 
 func parsePhoneFromVCF(vcf string) string {
@@ -795,27 +908,12 @@ func parsePhoneFromVCF(vcf string) string {
 
 // Главное меню – пока просто текст, без клавиатуры
 func (srv *Service) sendMainMenuMessage(ctx context.Context, chatID string) {
-	text := "Добро пожаловать!"
-
-	kb := keyboard{
-		Buttons: [][]keyboardButton{
-			{
-				{Type: "message", Text: menuShowChatID, Payload: menuShowChatID},
-			},
-			{
-				{Type: "message", Text: menuListChats, Payload: menuListChats},
-			},
-			{
-				{Type: "message", Text: menuNotificationSetting, Payload: menuNotificationSetting},
-			},
-			{
-				{Type: "message", Text: menuExcludePhoneNumber, Payload: menuExcludePhoneNumber},
-			},
-			{
-				{Type: "message", Text: menuBackToMain, Payload: menuBackToMain},
-			},
-		},
-	}
+	text := "Для регистрации, пожалуйста, нажмите кнопку ниже или просто напишите свой номер телефона."
+            		kb := keyboard{
+            			Buttons: [][]keyboardButton{
+            				{{Type: "request_contact", Payload: "share_phone", Text: "📞 Отправить свой номер телефона"}},
+            			},
+            		}
 
 	if err := srv.Bot.SendMessageWithKeyboard(ctx, chatID, text, kb, false); err != nil {
 		log.Printf("sendMainMenuMessage error: %v", err)
@@ -824,16 +922,12 @@ func (srv *Service) sendMainMenuMessage(ctx context.Context, chatID string) {
 
 // sendMainMenuMessageByChatID отправляет главное меню в чат по chat_id (для диалога при bot_started, когда передан recipient.chat_id).
 func (srv *Service) sendMainMenuMessageByChatID(ctx context.Context, chatID int64) {
-	text := "Добро пожаловать!"
-	kb := keyboard{
-		Buttons: [][]keyboardButton{
-			{{Type: "message", Text: menuShowChatID, Payload: menuShowChatID}},
-			{{Type: "message", Text: menuListChats, Payload: menuListChats}},
-			{{Type: "message", Text: menuNotificationSetting, Payload: menuNotificationSetting}},
-			{{Type: "message", Text: menuExcludePhoneNumber, Payload: menuExcludePhoneNumber}},
-			{{Type: "message", Text: menuBackToMain, Payload: menuBackToMain}},
-		},
-	}
+	text := "Для регистрации, пожалуйста, нажмите кнопку ниже или просто напишите свой номер телефона."
+            		kb := keyboard{
+            			Buttons: [][]keyboardButton{
+            				{{Type: "request_contact", Payload: "share_phone", Text: "📞 Отправить свой номер телефона"}},
+            			},
+            		}
 	if err := srv.Bot.SendToChatByIDWithKeyboard(ctx, chatID, text, kb); err != nil {
 		log.Printf("sendMainMenuMessageByChatID error: %v", err)
 	}
@@ -955,13 +1049,15 @@ func (srv *Service) sendNotificationSettingMessage(ctx context.Context, chatID s
 }
 
 // Сохранение контакта – перенос из saveContact
-func (srv *Service) saveContact(ctx context.Context, chatID string, userID int64, phone string) {
+func (srv *Service) saveContact(ctx context.Context, chatID string, userID int64, phone string, name string, emc string) {
 	chatIDInt, _ := strconv.ParseInt(chatID, 10, 64)
 
 	_, err := srv.storage.Contacts.Save(&tables.Contact{
 		UserID: userID,
 		ChatID: chatIDInt,
 		Phone:  phone,
+		Name:  name,
+		EMC:  emc,
 	})
 
 	var text string
@@ -1337,3 +1433,48 @@ func (srv *Service) getChatInfo(ctx context.Context, chatID int64) (*chatInfo, e
 
 	return &info, nil
 }
+
+func (srv *Service) convertToMessage(p messageCreatedPayload) *Message {
+    return &Message{
+        Recipient: Recipient{
+            ChatID:   p.Recipient.ChatID,
+            ChatType: p.Recipient.ChatType,
+            UserID:   p.Recipient.UserID,
+        },
+        Timestamp: time.Now().UnixMilli(), // реальный timestamp из p? У нас его нет в messageCreatedPayload, можно взять текущий
+        Body: Body{
+            Mid:         p.Body.Mid,
+            Seq:         p.Body.Seq,
+            Text:        p.Body.Text,
+//             Attachments: convertAttachments(p.Body.Attachments),
+        },
+        Sender: Sender{
+            UserID: p.Sender.UserID,
+            Name:   p.Sender.Name,
+        },
+    }
+}
+
+
+func (srv *Service) extractPhoneFromText(input string) string {
+	// Оставляем только цифры
+	var digits strings.Builder
+	for _, r := range input {
+		if r >= '0' && r <= '9' {
+			digits.WriteRune(r)
+		}
+	}
+
+	res := digits.String()
+
+	// Простейшая проверка на длину (для РФ/СНГ это обычно 10-11 цифр)
+	// Если пользователь ввел "8916...", "7916..." или "+7...", после очистки будет 11 цифр.
+	// Если ввел "916...", будет 10 цифр.
+	if len(res) >= 10 && len(res) <= 15 {
+		return res
+	}
+
+	return ""
+}
+
+

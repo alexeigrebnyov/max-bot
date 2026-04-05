@@ -24,12 +24,13 @@ RUN apk add --no-cache ca-certificates
 
 # Бинарник
 COPY --from=builder /app/max-bot-service /app/max-bot-service
+COPY --from=builder /app/web ./web
 
 # Каталог для SQLite
 RUN mkdir -p /app/data
 
 ENV TZ=UTC
 
-EXPOSE 8080
+EXPOSE 9003
 
 ENTRYPOINT ["/app/max-bot-service"]

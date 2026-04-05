@@ -15,4 +15,4 @@ services:
     volumes:
       - ./data:/data                      # SQLite-хранилище контактов
     ports:
-      - "8080:8080"                       # HTTP API и /webhook
+      - "9003:9003"                       # HTTP API и /webhook

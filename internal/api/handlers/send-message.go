@@ -131,3 +131,43 @@ func (handler *SendByPhoneHandler) ServeHTTP(w http.ResponseWriter, r *http.Requ
 		"phone":  req.Phone,
 	})
 }
+
+type GetChatMessagesHandler struct {
+	Bot bot.BotClient
+}
+
+func (handler *GetChatMessagesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+    var chat_id = r.URL.Query().Get("chat_id")
+    if chat_id == "" {
+        log.Printf("get-chat-messages: chat_id is required")
+        w.Header().Set("Content-Type", "application/json")
+        w.WriteHeader(http.StatusBadRequest)
+        _ = json.NewEncoder(w).Encode(map[string]string{
+            "status":  "error",
+            "message": "chat_id is required",
+        })
+        return
+    }
+
+	rows, err := handler.Bot.GetChatMessages(r.Context(), chat_id);
+	if err != nil {
+		log.Printf("get-chat-messages: error: %v", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"status":  "error",
+			"message": err.Error(),
+		})
+		return
+	}
+
+		log.Printf("get-chat-messages ok for chat_id=%s", chat_id)
+
+    	w.Header().Set("Content-Type", "application/json")
+    	w.WriteHeader(http.StatusOK)
+    	_ = json.NewEncoder(w).Encode(rows)
+}

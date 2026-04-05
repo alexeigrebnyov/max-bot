@@ -6,7 +6,7 @@ import (
 )
 
 func TestLoad_AppliesDefaults(t *testing.T) {
-	t.Setenv("BOT_TOKEN", "test-token")
+	t.Setenv("BOT_TOKEN", "f9LHodD0cOL7q8e32yXdHIzR1UW2QaU5OvhRliDTjfqpfT28tLqH3C35MxwcZp5yoUfB3XpQk8Xli5M-eHd7")
 	defer func() {
 		_ = os.Unsetenv("MAX_API_BASE_URL")
 		_ = os.Unsetenv("API_BASE_URL")
@@ -23,7 +23,7 @@ func TestLoad_AppliesDefaults(t *testing.T) {
 
 	cfg := Load()
 
-	if cfg.BotToken != "test-token" {
+	if cfg.BotToken != "f9LHodD0cOL7q8e32yXdHIzR1UW2QaU5OvhRliDTjfqpfT28tLqH3C35MxwcZp5yoUfB3XpQk8Xli5M-eHd7" {
 		t.Errorf("BotToken: got %q", cfg.BotToken)
 	}
 	if cfg.ApiBaseURL != DefaultApiBaseURL {
@@ -41,7 +41,7 @@ func TestLoad_AppliesDefaults(t *testing.T) {
 }
 
 func TestLoad_PortFromEnv(t *testing.T) {
-	t.Setenv("BOT_TOKEN", "test-token")
+	t.Setenv("BOT_TOKEN", "f9LHodD0cOL7q8e32yXdHIzR1UW2QaU5OvhRliDTjfqpfT28tLqH3C35MxwcZp5yoUfB3XpQk8Xli5M-eHd7")
 	t.Setenv("PORT", "9090")
 	defer os.Unsetenv("PORT")
 
@@ -52,7 +52,7 @@ func TestLoad_PortFromEnv(t *testing.T) {
 }
 
 func TestLoad_ApiBaseURLFromEnv(t *testing.T) {
-	t.Setenv("BOT_TOKEN", "test-token")
+	t.Setenv("BOT_TOKEN", "f9LHodD0cOL7q8e32yXdHIzR1UW2QaU5OvhRliDTjfqpfT28tLqH3C35MxwcZp5yoUfB3XpQk8Xli5M-eHd7")
 	t.Setenv("MAX_API_BASE_URL", "https://custom.max.ru")
 	defer os.Unsetenv("MAX_API_BASE_URL")
 
@@ -63,7 +63,7 @@ func TestLoad_ApiBaseURLFromEnv(t *testing.T) {
 }
 
 func TestLoad_RateLimitAndShutdownFromEnv(t *testing.T) {
-	t.Setenv("BOT_TOKEN", "test-token")
+	t.Setenv("BOT_TOKEN", "f9LHodD0cOL7q8e32yXdHIzR1UW2QaU5OvhRliDTjfqpfT28tLqH3C35MxwcZp5yoUfB3XpQk8Xli5M-eHd7")
 	t.Setenv("RATE_LIMIT_PER_MINUTE", "120")
 	t.Setenv("SHUTDOWN_TIMEOUT_SEC", "15")
 	defer func() {
@@ -81,7 +81,7 @@ func TestLoad_RateLimitAndShutdownFromEnv(t *testing.T) {
 }
 
 func TestLoad_UseLongPollingWhenWebhookURLEmpty(t *testing.T) {
-	t.Setenv("BOT_TOKEN", "test-token")
+	t.Setenv("BOT_TOKEN", "f9LHodD0cOL7q8e32yXdHIzR1UW2QaU5OvhRliDTjfqpfT28tLqH3C35MxwcZp5yoUfB3XpQk8Xli5M-eHd7")
 	os.Unsetenv("WEBHOOK_URL")
 	cfg := Load()
 	if !cfg.UseLongPolling {

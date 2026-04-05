@@ -93,16 +93,36 @@ func (srv *Service) Handler() http.Handler {
 
 func (srv *Service) buildMux() http.Handler {
 	mux := http.NewServeMux()
+	broker := handlers.NewEventBroker(srv.Bot)
 	if !srv.Bot.UseLongPolling() {
 		mux.HandleFunc("/webhook", srv.Bot.WebhookHandler())
 	}
+// 	webUIHandler, err := handlers.WebUIHandler()
+//     if err != nil {
+//         slog.Error("failed to init web UI", "error", err)
+//     } else {
+//         mux.Handle("/admin", webUIHandler)
+//     }
 	mux.Handle("/", &handlers.RootHandler{Bot: srv.Bot.BotModel})
 	mux.Handle("/send-message", rateLimit(srv.Cfg.RateLimitPerMinute, srv.Metrics, &handlers.SendMessageHandler{Bot: srv.Bot.BotModel}))
 	mux.Handle("/send-by-phone", rateLimit(srv.Cfg.RateLimitPerMinute, srv.Metrics, &handlers.SendByPhoneHandler{Bot: srv.Bot.BotModel}))
 	mux.Handle("/send-to-group-by-chatid", &handlers.SendToGroupByChatIdHandler{Bot: srv.Bot.BotModel})
+	mux.Handle("/get-messages-by-chatid", &handlers.GetChatMessagesHandler{Bot: srv.Bot.BotModel})
 	mux.Handle("/refresh-group-chats", requireAPIKey(srv.Cfg.APIKey, &handlers.RefreshGroupChatsHandler{Bot: srv.Bot}))
 	mux.Handle("/group-chats", requireAPIKey(srv.Cfg.APIKey, &handlers.GroupChatsHandler{Storage: srv.Storage}))
 	mux.HandleFunc("/metrics", srv.serveMetrics)
+	mux.Handle("/add-contact", &handlers.AddContactHandler{Contacts: srv.Storage.Contacts})
+	mux.Handle("/update-contact", &handlers.UpdateContactHandler{Contacts: srv.Storage.Contacts})
+    mux.Handle("/get-contact", &handlers.GetContactHandler{Contacts: srv.Storage.Contacts})
+    mux.Handle("/contacts", &handlers.ContactsHandler{Contacts: srv.Storage.Contacts})
+    // Новые:
+    mux.Handle("/events", broker)
+    mux.Handle("/send-chat-message", &handlers.SendChatMessageHandler{
+        Bot: srv.Bot.BotModel,
+        Events: broker,
+        })
+    mux.Handle("/admin", &handlers.WebUIHandler{})
+
 	var h http.Handler = mux
 	if srv.Metrics != nil {
 		h = srv.Metrics.metricsMiddleware(mux)

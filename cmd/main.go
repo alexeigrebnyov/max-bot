@@ -35,6 +35,8 @@ func initLogger(cfg *config.Config) {
 	slog.SetDefault(slog.New(handler))
 }
 
+
+
 func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()

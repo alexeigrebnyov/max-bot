@@ -8,7 +8,7 @@ import (
 
 const (
 	DefaultApiBaseURL = "https://platform-api.max.ru"
-	DefaultPort       = 8080
+	DefaultPort       = 9003
 )
 
 const (
