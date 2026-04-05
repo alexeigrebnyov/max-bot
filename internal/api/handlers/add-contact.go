@@ -16,11 +16,13 @@ type UpdateContactHandler struct {
 }
 
 type addContactRequest struct {
-	UserID int64  `json:"user_id"`
-	ChatID int64  `json:"chat_id"`
-	Phone  string `json:"phone"`
-	Name  string `json:"name"`
-	EMC  string `json:"emc"`
+	UserID    int64  `json:"user_id"`
+	ChatID    int64  `json:"chat_id"`
+	Phone     string `json:"phone"`
+	Name      string `json:"name"`
+	EMC       string `json:"emc"`
+	AvatarURL string `json:"avatar_url"`
+	EMCHash   string `json:"emchash"`
 }
 
 func (h *AddContactHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -44,11 +46,13 @@ func (h *AddContactHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	contact := &tables.Contact{
-		UserID: req.UserID,
-		ChatID: req.ChatID, // будет заполнено при первом сообщении от пользователя
-		Phone:  req.Phone,
-		Name:  req.Name,
-		EMC:  req.EMC,
+		UserID:    req.UserID,
+		ChatID:    req.ChatID, // будет заполнено при первом сообщении от пользователя
+		Phone:     req.Phone,
+		Name:      req.Name,
+		EMC:       req.EMC,
+		AvatarURL: req.AvatarURL,
+		EMCHash:   req.EMCHash,
 	}
 
 	_, err := h.Contacts.Save(contact)
@@ -84,11 +88,13 @@ func (h *UpdateContactHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 	}
 
 	contact := &tables.Contact{
-		UserID: req.UserID,
-		ChatID: req.ChatID, // будет заполнено при первом сообщении от пользователя
-		Phone:  req.Phone,
-		Name:  req.Name,
-		EMC:  req.EMC,
+		UserID:    req.UserID,
+		ChatID:    req.ChatID, // будет заполнено при первом сообщении от пользователя
+		Phone:     req.Phone,
+		Name:      req.Name,
+		EMC:       req.EMC,
+		AvatarURL: req.AvatarURL,
+		EMCHash:   req.EMCHash,
 	}
 
 	cont, err := h.Contacts.UpdateByPhone(contact)

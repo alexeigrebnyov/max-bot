@@ -16,22 +16,27 @@ CREATE TABLE IF NOT EXISTS contacts (
 	chatID INTEGER NOT NULL,
 	phone TEXT NOT NULL,
 	name TEXT NOT NULL,
-	emc TEXT
+	emc TEXT,
+	avatar_url TEXT,
+	emchash TEXT
 );
 
 CREATE INDEX IF NOT EXISTS contacts_chatID ON contacts(chatID);
-CREATE INDEX IF NOT EXISTS contacts_phone ON contacts(phone);`
+CREATE INDEX IF NOT EXISTS contacts_phone ON contacts(phone);
+CREATE INDEX IF NOT EXISTS contacts_emchash ON contacts(emchash);`
 
 type Contacts struct {
 	database *sql.DB
 }
 
 type Contact struct {
-	UserID int64
-	ChatID int64
-	Phone  string
-	Name  string
-	EMC  string
+	UserID    int64
+	ChatID    int64
+	Phone     string
+	Name      string
+	EMC       string
+	AvatarURL string
+	EMCHash   string
 }
 
 func NewContacts(db *sql.DB) *Contacts {
@@ -40,17 +45,44 @@ func NewContacts(db *sql.DB) *Contacts {
 		log.Fatal(err)
 	}
 
+	// Миграция: добавить колонки avatar_url и emchash в существующие БД
+	_, _ = db.Exec("ALTER TABLE contacts ADD COLUMN avatar_url TEXT")
+	_, _ = db.Exec("ALTER TABLE contacts ADD COLUMN emchash TEXT")
+	// Игнорируем ошибку "duplicate column name" (таблица уже с этими полями)
+
 	return &Contacts{database: db}
 }
 
 func (table *Contacts) Find(value string) (*Contact, error) {
 	row := table.database.QueryRow(
-		"SELECT userID, chatID, phone, name, emc FROM contacts WHERE userID = ? OR chatID = ? OR phone = ?",
+		"SELECT userID, chatID, phone, name, COALESCE(emc, ''), COALESCE(avatar_url, ''), COALESCE(emchash, '') FROM contacts WHERE userID = ? OR chatID = ? OR phone = ?",
 		value, value, normalizePhone(value),
 	)
 
 	var contact Contact
-	err := row.Scan(&contact.UserID, &contact.ChatID, &contact.Phone, &contact.Name, &contact.EMC)
+	err := row.Scan(&contact.UserID, &contact.ChatID, &contact.Phone, &contact.Name, &contact.EMC, &contact.AvatarURL, &contact.EMCHash)
+	if err == nil {
+		return &contact, nil
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+
+	return nil, nil
+}
+
+// FindByEMCHash ищет контакт по emchash
+func (table *Contacts) FindByEMCHash(emchash string) (*Contact, error) {
+	if emchash == "" {
+		return nil, nil
+	}
+
+	row := table.database.QueryRow(
+		"SELECT userID, chatID, phone, name, COALESCE(emc, ''), COALESCE(avatar_url, ''), COALESCE(emchash, '') FROM contacts WHERE emchash = ?",
+		emchash,
+	)
+
+	var contact Contact
+	err := row.Scan(&contact.UserID, &contact.ChatID, &contact.Phone, &contact.Name, &contact.EMC, &contact.AvatarURL, &contact.EMCHash)
 	if err == nil {
 		return &contact, nil
 	} else if !errors.Is(err, sql.ErrNoRows) {
@@ -64,8 +96,8 @@ func (table *Contacts) Save(contact *Contact) (bool, error) {
 	phone := normalizePhone(contact.Phone)
 
 	res, err := table.database.Exec(
-		"UPDATE contacts SET chatID = ?, phone = ?, name=?, emc=? WHERE userID = ?",
-		contact.ChatID, phone, contact.Name, contact.EMC, contact.UserID,
+		"UPDATE contacts SET chatID = ?, phone = ?, name=?, emc=?, avatar_url=?, emchash=? WHERE userID = ?",
+		contact.ChatID, phone, contact.Name, contact.EMC, contact.AvatarURL, contact.EMCHash, contact.UserID,
 	)
 	if err != nil {
 		return false, err
@@ -78,8 +110,8 @@ func (table *Contacts) Save(contact *Contact) (bool, error) {
 
 	if count == 0 {
 		res, err = table.database.Exec(
-			"INSERT INTO contacts VALUES (?, ?, ?, ?, ?)",
-			contact.UserID, contact.ChatID, phone, contact.Name, contact.EMC,
+			"INSERT INTO contacts VALUES (?, ?, ?, ?, ?, ?, ?)",
+			contact.UserID, contact.ChatID, phone, contact.Name, contact.EMC, contact.AvatarURL, contact.EMCHash,
 		)
 		if err != nil {
 			return false, err
@@ -100,7 +132,7 @@ func (table *Contacts) UpdateByPhone(contact *Contact) (*Contact, error) {
 	phone := normalizePhone(contact.Phone)
 
 	rows, err := table.database.Query(
-		"SELECT userID, chatID, phone, name, emc FROM contacts WHERE phone = ?",
+		"SELECT userID, chatID, phone, name, COALESCE(emc, ''), COALESCE(avatar_url, ''), COALESCE(emchash, '') FROM contacts WHERE phone = ?",
 		phone,
 	)
 
@@ -113,7 +145,7 @@ func (table *Contacts) UpdateByPhone(contact *Contact) (*Contact, error) {
     	var contacts []*Contact
     	for rows.Next() {
     		var newcontact Contact
-    		if err := rows.Scan(&newcontact.UserID, &newcontact.ChatID, &newcontact.Phone, &newcontact.Name, &newcontact.EMC); err != nil {
+    		if err := rows.Scan(&newcontact.UserID, &newcontact.ChatID, &newcontact.Phone, &newcontact.Name, &newcontact.EMC, &newcontact.AvatarURL, &newcontact.EMCHash); err != nil {
     			return nil, err
     		}
     		contacts = append(contacts, &newcontact)
@@ -135,8 +167,8 @@ func (table *Contacts) UpdateByPhone(contact *Contact) (*Contact, error) {
 
 	if count > 0 {
 		res, err := table.database.Exec(
-			"UPDATE contacts SET name=?, emc=? WHERE phone = ?",
-			contact.Name, contact.EMC, phone,
+			"UPDATE contacts SET name=?, emc=?, avatar_url=?, emchash=? WHERE phone = ?",
+			contact.Name, contact.EMC, contact.AvatarURL, contact.EMCHash, phone,
 		)
 		if err != nil {
 			return nil, err
@@ -194,7 +226,7 @@ func normalizePhone(phone string) string {
 
 // All возвращает все контакты из таблицы.
 func (table *Contacts) All() ([]*Contact, error) {
-	rows, err := table.database.Query("SELECT userID, chatID, phone, name, emc FROM contacts")
+	rows, err := table.database.Query("SELECT userID, chatID, phone, name, COALESCE(emc, ''), COALESCE(avatar_url, ''), COALESCE(emchash, '') FROM contacts")
 	if err != nil {
 		return nil, err
 	}
@@ -203,7 +235,7 @@ func (table *Contacts) All() ([]*Contact, error) {
 	var contacts []*Contact
 	for rows.Next() {
 		var c Contact
-		if err := rows.Scan(&c.UserID, &c.ChatID, &c.Phone, &c.Name, &c.EMC); err != nil {
+		if err := rows.Scan(&c.UserID, &c.ChatID, &c.Phone, &c.Name, &c.EMC, &c.AvatarURL, &c.EMCHash); err != nil {
 			return nil, err
 		}
 		contacts = append(contacts, &c)

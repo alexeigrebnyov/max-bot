@@ -363,8 +363,11 @@ type messageCreatedPayload struct {
 	Sender struct {
 		UserID int64  `json:"user_id"`
 		Name   string `json:"name"`
+		Avatar string `json:"avatar_url"`
 		// остальные поля можно не описывать
 	} `json:"sender"`
+
+	Payload string `json:"payload"` // payload на верхнем уровне (для bot_started и других событий)
 }
 
 // webhookUpdate — структура Update из MAX (Webhook POST и GET /updates).
@@ -792,7 +795,7 @@ func (srv *Service) handleMessageCreatedOld(ctx context.Context, raw json.RawMes
 				}
 
 				// chatKey мы уже посчитали как userID отправителя
-				srv.saveContact(ctx, chatKey, att.Payload.MaxInfo.UserID, phone, name, emc)
+				srv.saveContact(ctx, chatKey, att.Payload.MaxInfo.UserID, phone, name, emc, "")
 				return
 			}
 		}
@@ -810,10 +813,11 @@ func (srv *Service) handleMessageCreated(ctx context.Context, raw json.RawMessag
 
 	userID := p.Sender.UserID
 	name := p.Sender.Name
+	avatar := p.Sender.Avatar
 	chatID := p.Recipient.ChatID
 	chatType := p.Recipient.ChatType
 	text := p.Body.Text
-	emc := ""
+	payload := p.Payload // payload на верхнем уровне
 	if text == "" && p.Body.Payload != "" {
 		text = p.Body.Payload
 	}
@@ -823,6 +827,18 @@ func (srv *Service) handleMessageCreated(ctx context.Context, raw json.RawMessag
 	if trimmedText == "/start" || trimmedText == "start" {
 		chatKey := strconv.FormatInt(userID, 10)
 
+		// Проверяем наличие payload с emchash
+		if payload != "" && strings.HasPrefix(payload, "emchash_") {
+			// Извлекаем emchash из payload
+			emchash := strings.TrimPrefix(payload, "emchash_")
+			log.Printf("message_created: /start with emchash=%s userID=%d", emchash, userID)
+
+			// Сохраняем/обновляем контакт по emchash
+			srv.saveContactByEMCHash(ctx, chatKey, userID, emchash, name, avatar)
+			return
+		}
+
+		// Если payload пустой — текущая логика (запрос телефона)
 		// --- ВАРИАНТ А: Только текст ---
 		// textMsg := "Отправьте, пожалуйста, Ваш номер телефона (просто текстом в ответ на это сообщение)"
 		// _ = srv.Bot.SendMessage(ctx, chatKey, 0, textMsg, false)
@@ -881,7 +897,7 @@ func (srv *Service) handleMessageCreated(ctx context.Context, raw json.RawMessag
 	// 3. Если номер найден — сохраняем
 	if foundPhone != "" {
 		// Сохраняем/обновляем в БД
-		srv.saveContact(ctx, chatKey, userID, foundPhone, name, emc)
+		srv.saveContact(ctx, chatKey, userID, foundPhone, name, "", avatar)
 		return
 	}
 
@@ -1049,15 +1065,17 @@ func (srv *Service) sendNotificationSettingMessage(ctx context.Context, chatID s
 }
 
 // Сохранение контакта – перенос из saveContact
-func (srv *Service) saveContact(ctx context.Context, chatID string, userID int64, phone string, name string, emc string) {
+func (srv *Service) saveContact(ctx context.Context, chatID string, userID int64, phone string, name string, emc string, avatar string) {
 	chatIDInt, _ := strconv.ParseInt(chatID, 10, 64)
 
 	_, err := srv.storage.Contacts.Save(&tables.Contact{
-		UserID: userID,
-		ChatID: chatIDInt,
-		Phone:  phone,
-		Name:  name,
-		EMC:  emc,
+		UserID:    userID,
+		ChatID:    chatIDInt,
+		Phone:     phone,
+		Name:      name,
+		EMC:       emc,
+		AvatarURL: avatar,
+		EMCHash:   "", // при сохранении по телефону emchash пустой
 	})
 
 	var text string
@@ -1082,6 +1100,70 @@ func (srv *Service) saveContact(ctx context.Context, chatID string, userID int64
 
 	if err := srv.Bot.SendMessageWithKeyboard(ctx, chatID, text, kb, false); err != nil {
 		log.Printf("saveContact: send reply error: %v", err)
+	}
+}
+
+// saveContactByEMCHash сохраняет/обновляет контакт по emchash (при /start с payload)
+func (srv *Service) saveContactByEMCHash(ctx context.Context, chatID string, userID int64, emchash string, name string, avatar string) {
+	chatIDInt, _ := strconv.ParseInt(chatID, 10, 64)
+
+	// Проверяем, есть ли уже контакт с таким emchash
+	existingContact, err := srv.storage.Contacts.FindByEMCHash(emchash)
+	if err != nil {
+		log.Printf("saveContactByEMCHash: FindByEMCHash error: %v", err)
+	}
+
+	var text string
+	if existingContact != nil {
+		// Обновляем существующий контакт
+		existingContact.UserID = userID
+		existingContact.ChatID = chatIDInt
+		existingContact.Name = name
+		existingContact.AvatarURL = avatar
+		existingContact.EMCHash = emchash
+
+		_, err = srv.storage.Contacts.Save(existingContact)
+		if err != nil {
+			log.Printf("saveContactByEMCHash: update error: %v", err)
+			text = "Не удалось обновить контакт 😞"
+		} else {
+			log.Printf("saveContactByEMCHash: updated contact for emchash=%s userID=%d", emchash, userID)
+			text = "Контакт успешно обновлен! Теперь вы можете получать уведомления."
+		}
+	} else {
+		// Создаем новый контакт (без телефона, только emchash)
+		_, err = srv.storage.Contacts.Save(&tables.Contact{
+			UserID:    userID,
+			ChatID:    chatIDInt,
+			Phone:     "", // телефон пока неизвестен
+			Name:      name,
+			EMC:       "",
+			AvatarURL: avatar,
+			EMCHash:   emchash,
+		})
+		if err != nil {
+			log.Printf("saveContactByEMCHash: save error: %v", err)
+			text = "Не удалось сохранить контакт 😞"
+		} else {
+			log.Printf("saveContactByEMCHash: created contact for emchash=%s userID=%d", emchash, userID)
+			text = "Контакт успешно создан! Теперь вы можете получать уведомления."
+		}
+	}
+
+	kb := keyboard{
+		Buttons: [][]keyboardButton{
+			{
+				{
+					Type:    "message",
+					Text:    menuBackToMain,
+					Payload: menuBackToMain,
+				},
+			},
+		},
+	}
+
+	if err := srv.Bot.SendMessageWithKeyboard(ctx, chatID, text, kb, false); err != nil {
+		log.Printf("saveContactByEMCHash: send reply error: %v", err)
 	}
 }
 

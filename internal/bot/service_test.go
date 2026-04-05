@@ -125,7 +125,7 @@ func TestSaveAndDeleteContact(t *testing.T) {
 	chatID := "23718629"
 
 	// saveContact
-	srv.saveContact(ctx, chatID, 23718629, "8(903)907-63-99")
+	srv.saveContact(ctx, chatID, 23718629, "8(903)907-63-99", "Test User", "", "")
 
 	contact, err := srv.storage.Contacts.Find(chatID)
 	if err != nil {
