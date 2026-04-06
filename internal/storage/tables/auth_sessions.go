@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
     state TEXT NOT NULL,
     emchash TEXT,
     phone TEXT,
+    avatar TEXT,
     attempts INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
@@ -33,6 +34,7 @@ type AuthSession struct {
 	State     string // "awaiting_phone_emchash", "awaiting_phone_empty", "awaiting_birthdate"
 	EMCHash   string // для варианта с emchash
 	Phone     string // для варианта с телефоном
+	Avatar     string // для варианта с телефоном
 	Attempts  int    // количество попыток (максимум 3)
 	CreatedAt int64  // timestamp создания
 	UpdatedAt int64  // timestamp последнего обновления
@@ -48,12 +50,12 @@ func NewAuthSessions(db *sql.DB) *AuthSessions {
 // Get возвращает сессию авторизации по userID
 func (table *AuthSessions) Get(userID int64) (*AuthSession, error) {
 	row := table.database.QueryRow(
-		"SELECT user_id, state, COALESCE(emchash, ''), COALESCE(phone, ''), attempts, created_at, updated_at FROM auth_sessions WHERE user_id = ?",
+		"SELECT user_id, state, COALESCE(emchash, ''), COALESCE(phone, ''), COALESCE(avatar, ''), attempts, created_at, updated_at FROM auth_sessions WHERE user_id = ?",
 		userID,
 	)
 
 	var session AuthSession
-	err := row.Scan(&session.UserID, &session.State, &session.EMCHash, &session.Phone, &session.Attempts, &session.CreatedAt, &session.UpdatedAt)
+	err := row.Scan(&session.UserID, &session.State, &session.EMCHash, &session.Phone, &session.Avatar, &session.Attempts, &session.CreatedAt, &session.UpdatedAt)
 	if err == nil {
 		return &session, nil
 	} else if !errors.Is(err, sql.ErrNoRows) {
@@ -72,8 +74,8 @@ func (table *AuthSessions) Save(session *AuthSession) error {
 	session.UpdatedAt = now
 
 	res, err := table.database.Exec(
-		"UPDATE auth_sessions SET state = ?, emchash = ?, phone = ?, attempts = ?, updated_at = ? WHERE user_id = ?",
-		session.State, session.EMCHash, session.Phone, session.Attempts, session.UpdatedAt, session.UserID,
+		"UPDATE auth_sessions SET state = ?, emchash = ?, phone = ?, avatar = ?, attempts = ?, updated_at = ? WHERE user_id = ?",
+		session.State, session.EMCHash, session.Phone, session.Avatar, session.Attempts, session.UpdatedAt, session.UserID,
 	)
 	if err != nil {
 		return err
@@ -86,8 +88,8 @@ func (table *AuthSessions) Save(session *AuthSession) error {
 
 	if count == 0 {
 		_, err = table.database.Exec(
-			"INSERT INTO auth_sessions VALUES (?, ?, ?, ?, ?, ?, ?)",
-			session.UserID, session.State, session.EMCHash, session.Phone, session.Attempts, session.CreatedAt, session.UpdatedAt,
+			"INSERT INTO auth_sessions VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+			session.UserID, session.State, session.EMCHash, session.Phone, session.Avatar, session.Attempts, session.CreatedAt, session.UpdatedAt,
 		)
 		return err
 	}

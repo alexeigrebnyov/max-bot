@@ -817,11 +817,29 @@ func (srv *Service) handleMessageCreated(ctx context.Context, raw json.RawMessag
 	avatar := p.Sender.Avatar
 	log.Printf("handleMessageCreated: userID=%d name=%s avatar=%s", userID, name, avatar)
 	chatType := p.Recipient.ChatType
+	chat := p.Recipient.ChatID
 	text := p.Body.Text
 	payload := p.Payload // payload на верхнем уровне
+
+		if len(p.Body.Attachments) > 0 {
+    		for _, att := range p.Body.Attachments {
+    			if att.Type == "contact" {
+    				phone := parsePhoneFromVCF(att.Payload.VCFInfo) // напишем функцию
+    				if phone == "" {
+    					log.Printf("contact attachment without phone")
+    					return
+    				}
+                    text = phone
+    			}
+    		}
+    	}
+
 	if text == "" && p.Body.Payload != "" {
 		text = p.Body.Payload
 	}
+
+
+
 
 	// Если это не личный диалог - отправляем в канал для SSE
 	if chatType != "dialog" {
@@ -836,7 +854,7 @@ func (srv *Service) handleMessageCreated(ctx context.Context, raw json.RawMessag
 		return
 	}
 
-	chatKey := strconv.FormatInt(userID, 10)
+	chatKey := strconv.FormatInt(chat, 10)
 	trimmedText := strings.TrimSpace(text)
 
 	// Проверяем, есть ли активная сессия авторизации
@@ -887,6 +905,7 @@ func (srv *Service) handleStartCommand(ctx context.Context, userID int64, chatKe
 			UserID:   userID,
 			State:    "awaiting_phone_emchash",
 			EMCHash:  emchash,
+			Avatar:  avatar,
 			Attempts: 0,
 		}
 
@@ -912,6 +931,7 @@ func (srv *Service) handleStartCommand(ctx context.Context, userID int64, chatKe
 
 	session := &tables.AuthSession{
 		UserID:   userID,
+		Avatar:  avatar,
 		State:    "awaiting_phone_empty",
 		Attempts: 0,
 	}
@@ -938,11 +958,11 @@ func (srv *Service) handleAuthSession(ctx context.Context, session *tables.AuthS
 
 	switch session.State {
 	case "awaiting_phone_emchash":
-		srv.handleAwaitingPhoneEMCHash(ctx, session, userID, chatKey, text, name, avatar)
+		srv.handleAwaitingPhoneEMCHash(ctx, session, userID, chatKey, text, name, session.Avatar)
 	case "awaiting_phone_empty":
-		srv.handleAwaitingPhoneEmpty(ctx, session, userID, chatKey, text, name, avatar)
+		srv.handleAwaitingPhoneEmpty(ctx, session, userID, chatKey, text, name, session.Avatar)
 	case "awaiting_birthdate":
-		srv.handleAwaitingBirthdate(ctx, session, userID, chatKey, text, name, avatar)
+		srv.handleAwaitingBirthdate(ctx, session, userID, chatKey, text, name, session.Avatar)
 	default:
 		log.Printf("handleAuthSession: unknown state=%s", session.State)
 		srv.storage.AuthSessions.Delete(userID)
@@ -951,6 +971,7 @@ func (srv *Service) handleAuthSession(ctx context.Context, session *tables.AuthS
 
 // handleAwaitingPhoneEMCHash обрабатывает ввод телефона (вариант с emchash)
 func (srv *Service) handleAwaitingPhoneEMCHash(ctx context.Context, session *tables.AuthSession, userID int64, chatKey string, text string, name string, avatar string) {
+
 	// Извлекаем телефон из текста
 	phone := srv.extractPhoneFromText(text)
 	if phone == "" {
@@ -980,6 +1001,9 @@ func (srv *Service) handleAwaitingPhoneEMCHash(ctx context.Context, session *tab
 	normalizedInputPhone := tables.NormalizePhone(phone)
 	normalizedContactPhone := tables.NormalizePhone(contact.Phone)
 
+	log.Printf("normalizedInputPhone from handleAwaitingPhoneEMCHash %s ", normalizedInputPhone)
+	log.Printf("normalizedContactPhone from handleAwaitingPhoneEMCHash %s ", normalizedContactPhone)
+
 	// Сверяем телефон
 	if normalizedInputPhone != normalizedContactPhone {
 		log.Printf("handleAwaitingPhoneEMCHash: phone mismatch: got=%s expected=%s", normalizedInputPhone, normalizedContactPhone)
@@ -1001,12 +1025,16 @@ func (srv *Service) handleAwaitingPhoneEMCHash(ctx context.Context, session *tab
 	contact.ChatID = chatIDInt
 	contact.AvatarURL = avatar
 
+
+
 	if _, err := srv.storage.Contacts.Save(contact); err != nil {
 		log.Printf("handleAwaitingPhoneEMCHash: Save error: %v", err)
 		srv.storage.AuthSessions.Delete(userID)
 		srv.sendAuthError(ctx, chatKey)
 		return
 	}
+
+	log.Printf("avatar from handleAwaitingPhoneEMCHash %s ", avatar)
 
 	// Успешная авторизация
 	srv.storage.AuthSessions.Delete(userID)
