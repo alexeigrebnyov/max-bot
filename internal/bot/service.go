@@ -984,7 +984,7 @@ func (srv *Service) handleAwaitingPhoneEMCHash(ctx context.Context, session *tab
 			return
 		}
 		srv.storage.AuthSessions.Save(session)
-		srv.Bot.SendMessage(ctx, chatKey, 0, "Неверный формат телефона. Попробуйте ещё раз.", false)
+		srv.Bot.SendMessage(ctx, chatKey, 0, "Неверный формат телефона. Попробуйте ещё раз.", true)
 		return
 	}
 
@@ -1001,8 +1001,6 @@ func (srv *Service) handleAwaitingPhoneEMCHash(ctx context.Context, session *tab
 	normalizedInputPhone := tables.NormalizePhone(phone)
 	normalizedContactPhone := tables.NormalizePhone(contact.Phone)
 
-	log.Printf("normalizedInputPhone from handleAwaitingPhoneEMCHash %s ", normalizedInputPhone)
-	log.Printf("normalizedContactPhone from handleAwaitingPhoneEMCHash %s ", normalizedContactPhone)
 
 	// Сверяем телефон
 	if normalizedInputPhone != normalizedContactPhone {
@@ -1015,7 +1013,7 @@ func (srv *Service) handleAwaitingPhoneEMCHash(ctx context.Context, session *tab
 			return
 		}
 		srv.storage.AuthSessions.Save(session)
-		srv.Bot.SendMessage(ctx, chatKey, 0, "Неверный номер телефона. Попробуйте ещё раз.", false)
+		srv.Bot.SendMessage(ctx, chatKey, 0, "Неверный номер телефона. Попробуйте ещё раз.", true)
 		return
 	}
 
@@ -1039,12 +1037,13 @@ func (srv *Service) handleAwaitingPhoneEMCHash(ctx context.Context, session *tab
 	// Успешная авторизация
 	srv.storage.AuthSessions.Delete(userID)
 	successText := "Авторизация успешна! Теперь вы можете получать уведомления."
-	kb := keyboard{
-		Buttons: [][]keyboardButton{
-			{{Type: "message", Text: menuBackToMain, Payload: menuBackToMain}},
-		},
-	}
-	srv.Bot.SendMessageWithKeyboard(ctx, chatKey, successText, kb, false)
+// 	kb := keyboard{
+// 		Buttons: [][]keyboardButton{
+// 			{{Type: "message", Text: menuBackToMain, Payload: menuBackToMain}},
+// 		},
+// 	}
+// 	srv.Bot.SendMessageWithKeyboard(ctx, chatKey, successText, kb, false)
+    srv.Bot.SendMessage(ctx, chatKey, 0, successText, true)
 	log.Printf("handleAwaitingPhoneEMCHash: success for userID=%d emchash=%s", userID, session.EMCHash)
 }
 
@@ -1062,7 +1061,7 @@ func (srv *Service) handleAwaitingPhoneEmpty(ctx context.Context, session *table
 			return
 		}
 		srv.storage.AuthSessions.Save(session)
-		srv.Bot.SendMessage(ctx, chatKey, 0, "Неверный формат телефона. Попробуйте ещё раз.", false)
+		srv.Bot.SendMessage(ctx, chatKey, 0, "Неверный формат телефона. Попробуйте ещё раз.", true)
 		return
 	}
 
@@ -1089,7 +1088,7 @@ func (srv *Service) handleAwaitingPhoneEmpty(ctx context.Context, session *table
 
 	// Запрашиваем дату рождения
 	prompt := "Напишите дату Вашего рождения в формате дд.мм.гггг"
-	srv.Bot.SendMessage(ctx, chatKey, 0, prompt, false)
+	srv.Bot.SendMessage(ctx, chatKey, 0, prompt, true)
 }
 
 // handleAwaitingBirthdate обрабатывает ввод даты рождения
@@ -1106,7 +1105,7 @@ func (srv *Service) handleAwaitingBirthdate(ctx context.Context, session *tables
 			return
 		}
 		srv.storage.AuthSessions.Save(session)
-		srv.Bot.SendMessage(ctx, chatKey, 0, "Неверный формат даты. Используйте формат дд.мм.гггг (например, 01.01.1990). Попробуйте ещё раз.", false)
+		srv.Bot.SendMessage(ctx, chatKey, 0, "Неверный формат даты. Используйте формат дд.мм.гггг (например, 01.01.1990). Попробуйте ещё раз.", true)
 		return
 	}
 
@@ -1130,7 +1129,7 @@ func (srv *Service) handleAwaitingBirthdate(ctx context.Context, session *tables
 			return
 		}
 		srv.storage.AuthSessions.Save(session)
-		srv.Bot.SendMessage(ctx, chatKey, 0, "Неверная дата рождения. Попробуйте ещё раз.", false)
+		srv.Bot.SendMessage(ctx, chatKey, 0, "Неверная дата рождения. Попробуйте ещё раз.", true)
 		return
 	}
 
@@ -1150,12 +1149,14 @@ func (srv *Service) handleAwaitingBirthdate(ctx context.Context, session *tables
 	// Успешная авторизация
 	srv.storage.AuthSessions.Delete(userID)
 	successText := "Авторизация успешна! Теперь вы можете получать уведомления."
-	kb := keyboard{
-		Buttons: [][]keyboardButton{
-			{{Type: "message", Text: menuBackToMain, Payload: menuBackToMain}},
-		},
-	}
-	srv.Bot.SendMessageWithKeyboard(ctx, chatKey, successText, kb, false)
+// 	kb := keyboard{
+// 		Buttons: [][]keyboardButton{
+// 			{{Type: "message", Text: menuBackToMain, Payload: menuBackToMain}},
+// 		},
+// 	}
+// 	srv.Bot.SendMessageWithKeyboard(ctx, chatKey, successText, kb, false)
+    srv.Bot.SendMessage(ctx, chatKey, 0, successText, true)
+
 	log.Printf("handleAwaitingBirthdate: success for userID=%d phone=%s", userID, session.Phone)
 }
 
