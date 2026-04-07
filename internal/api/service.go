@@ -107,7 +107,7 @@ func (srv *Service) buildMux() http.Handler {
 	mux.Handle("/send-message", rateLimit(srv.Cfg.RateLimitPerMinute, srv.Metrics, &handlers.SendMessageHandler{Bot: srv.Bot.BotModel}))
 	mux.Handle("/send-by-phone", rateLimit(srv.Cfg.RateLimitPerMinute, srv.Metrics, &handlers.SendByPhoneHandler{Bot: srv.Bot.BotModel}))
 	mux.Handle("/send-to-group-by-chatid", &handlers.SendToGroupByChatIdHandler{Bot: srv.Bot.BotModel})
-	mux.Handle("/get-messages-by-chatid", &handlers.GetChatMessagesHandler{Bot: srv.Bot.BotModel})
+	mux.Handle("/get-messages-by-chatid", &handlers.GetChatMessagesHandler{Bot: srv.Bot.BotModel, MessageStatus: srv.Storage.MessageStatus})
 	mux.Handle("/refresh-group-chats", requireAPIKey(srv.Cfg.APIKey, &handlers.RefreshGroupChatsHandler{Bot: srv.Bot}))
 	mux.Handle("/group-chats", requireAPIKey(srv.Cfg.APIKey, &handlers.GroupChatsHandler{Storage: srv.Storage}))
 	mux.HandleFunc("/metrics", srv.serveMetrics)

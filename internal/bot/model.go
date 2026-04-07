@@ -78,6 +78,7 @@ type Message struct {
 	Timestamp int64     `json:"timestamp"`
 	Body      Body      `json:"body"`
 	Sender    Sender    `json:"sender"`
+	IsRead    bool      `json:"is_read"`
 }
 
 // Recipient — получатель сообщения.

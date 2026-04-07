@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"log"
 	"max-bot-service/internal/bot"
+	"max-bot-service/internal/storage/tables"
 	"net/http"
+	"strconv"
 )
 
 type SendMessageHandler struct {
@@ -133,7 +135,8 @@ func (handler *SendByPhoneHandler) ServeHTTP(w http.ResponseWriter, r *http.Requ
 }
 
 type GetChatMessagesHandler struct {
-	Bot bot.BotClient
+	Bot           bot.BotClient
+	MessageStatus *tables.MessageStatus
 }
 
 func (handler *GetChatMessagesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -165,9 +168,20 @@ func (handler *GetChatMessagesHandler) ServeHTTP(w http.ResponseWriter, r *http.
 		return
 	}
 
-		log.Printf("get-chat-messages ok for chat_id=%s", chat_id)
+	// Добавляем статусы прочитанности для каждого сообщения
+	chatIDInt, _ := strconv.ParseInt(chat_id, 10, 64)
+	for i := range rows {
+		if rows[i].Body.Mid != "" && handler.MessageStatus != nil {
+			status, err := handler.MessageStatus.GetStatus(chatIDInt, rows[i].Body.Mid)
+			if err == nil && status != nil {
+				rows[i].IsRead = status.IsRead
+			}
+		}
+	}
 
-    	w.Header().Set("Content-Type", "application/json")
-    	w.WriteHeader(http.StatusOK)
-    	_ = json.NewEncoder(w).Encode(rows)
+	log.Printf("get-chat-messages ok for chat_id=%s", chat_id)
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(rows)
 }

@@ -283,11 +283,11 @@
         let filtered = allMessages.filter(msg => {
             // Фильтр по типу
             if (currentFilter === 'unread') {
-                // TODO: проверка статуса прочитанности
-                return true;
+                // Показываем только непрочитанные сообщения
+                return !msg.is_read;
             } else if (currentFilter === 'sent') {
                 // Отправленные сообщения (от бота)
-                return msg.sender?.user_id === 0 || !msg.sender?.user_id;
+                return msg.sender && msg.sender.is_bot;
             }
             return true;
         });
