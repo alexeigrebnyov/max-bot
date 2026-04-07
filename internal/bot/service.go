@@ -838,19 +838,18 @@ func (srv *Service) handleMessageCreated(ctx context.Context, raw json.RawMessag
 		text = p.Body.Payload
 	}
 
-
-
-
-	// Если это не личный диалог - отправляем в канал для SSE
-	if chatType != "dialog" {
-		if srv.NewMessages != nil {
-			msg := srv.convertToMessage(p)
-			select {
-			case srv.NewMessages <- msg:
-			default:
-				log.Printf("NewMessages channel full, dropping message")
-			}
+	// Отправляем все сообщения в канал для SSE (включая диалоги)
+	if srv.NewMessages != nil {
+		msg := srv.convertToMessage(p)
+		select {
+		case srv.NewMessages <- msg:
+		default:
+			log.Printf("NewMessages channel full, dropping message")
 		}
+	}
+
+	// Если это не личный диалог - дальнейшая обработка не нужна
+	if chatType != "dialog" {
 		return
 	}
 

@@ -246,7 +246,6 @@
     let currentUserId = null;
     let eventSource = null;
     let contactsMap = new Map(); // key: chat_id, value: contact object
-    let messagesMap = new Map()
 
     // Форматирование времени
     function formatTime(timestamp) {
@@ -290,7 +289,6 @@
             const avatarText = emc || (phone ? phone.slice(-2) : userId.toString().slice(-2)).toUpperCase();
 
             contactsMap.set(chatId, contact);
-           loadAllMessages(chatId)
 
             const div = document.createElement('div');
             div.className = 'contact-item';
@@ -358,29 +356,14 @@
         await loadMessages(chatId);
     }
 
-    async function loadAllMessages(chatId) {
-
-        try {
-            const resp = await fetch(`/get-messages-by-chatid?chat_id=${chatId}`);
-            if (!resp.ok) throw new Error('Network error');
-            const messages = await resp.json(); // ожидается массив сообщений
-            messagesMap.set(chatId, messages); // ожидается массив сообщений
-        } catch (err) {
-            console.error('loadMessages error:', err);
-        }
-
-
-    }
-
     // Загрузка сообщений по chat_id
     async function loadMessages(chatId) {
         const container = document.getElementById('messages-container');
-        // container.innerHTML = '<div class="empty-state">Загрузка...</div>';
+        container.innerHTML = '<div class="empty-state">Загрузка...</div>';
         try {
-            // const resp = await fetch(`/get-messages-by-chatid?chat_id=${chatId}`);
-            // if (!resp.ok) throw new Error('Network error');
-            // const messages = await resp.json(); // ожидается массив сообщений
-            const messages = messagesMap.get(chatId); // ожидается массив сообщений
+            const resp = await fetch(`/get-messages-by-chatid?chat_id=${chatId}`);
+            if (!resp.ok) throw new Error('Network error');
+            const messages = await resp.json();
             renderMessages(messages);
         } catch (err) {
             console.error('loadMessages error:', err);
@@ -549,9 +532,7 @@
     });
 
     loadContacts().then(() => {
-        // connectEventSource();
-        // Периодическое обновление списка контактов (на случай новых)
-        setInterval(loadContacts, 5000);
+        connectEventSource();
     });
 </script>
 </body>

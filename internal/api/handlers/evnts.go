@@ -102,29 +102,6 @@ func (b *EventBroker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-
-func(b *EventBroker) getOwnMessage(chatID int64, text string) {
-
-    data, err := json.Marshal(b.botSrv.Bot.GetStructuredMessage(chatID, text))
-
-    if err != nil {
-    			log.Printf("getOwnMessage: marshal error: %v", err)
-    			return
-    		}
-      b.mu.Lock()
-                    for ch := range b.clients {
-                        select {
-                        case ch <- data:
-                        default:
-                            // Если клиент не успевает читать, удаляем его
-                            close(ch)
-                            delete(b.clients, ch)
-                        }
-                    }
-            b.mu.Unlock()
-
-}
-
 // Метод для ручной отправки сообщения в канал SSE
 func (b *EventBroker) BroadcastStructuredMessage(msg *bot.Message) {
     if b == nil { return }
@@ -180,19 +157,12 @@ func (h *SendChatMessageHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
         http.Error(w, err.Error(), http.StatusBadRequest)
         return
     }
-//     h.Events.getOwnMessage(req.ChatID, req.Text)
 
-//     data, err := json.Marshal(h.Bot.GetStructuredMessage(req.ChatID, req.Text))
-//
-//         if err != nil {
-//         			log.Printf("getOwnMessage: marshal error: %v", err)
-//
-//         		}
-
-//     if h.Events != nil {
-//             msg := h.Bot.GetStructuredMessage(req.ChatID, req.Text)
-//             h.Events.BroadcastStructuredMessage(msg)
-//         }
+    // Отправляем исходящее сообщение в EventSource
+    if h.Events != nil {
+        msg := h.Bot.GetStructuredMessage(req.ChatID, req.Text)
+        h.Events.BroadcastStructuredMessage(msg)
+    }
 
     w.WriteHeader(http.StatusNoContent)
 }
