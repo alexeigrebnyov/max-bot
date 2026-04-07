@@ -270,6 +270,21 @@
         }
     }
 
+    // Загрузка последнего сообщения для чата
+    async function loadLastMessage(chatId) {
+        try {
+            const resp = await fetch(`/get-messages-by-chatid?chat_id=${chatId}`);
+            if (!resp.ok) return;
+            const messages = await resp.json();
+            if (messages && messages.length > 0) {
+                const lastMsg = messages[messages.length - 1];
+                updateContactPreview(chatId, lastMsg.body.text || '', lastMsg.timestamp);
+            }
+        } catch (err) {
+            console.error('loadLastMessage error:', err);
+        }
+    }
+
     // Рендер списка контактов
     function renderContacts(contacts) {
         // console.log(contacts)
@@ -314,6 +329,9 @@
             `;
             div.addEventListener('click', () => openChat(chatId, userId, phone, name, contact.Birthdate, emc, avatarUrl));
             container.appendChild(div);
+
+            // Загружаем последнее сообщение для этого чата
+            loadLastMessage(chatId);
         });
 
         // Если был открыт чат, но его нет в списке — очищаем
@@ -476,10 +494,13 @@
                 const msgChatId = Number(msg.recipient?.chat_id || msg.sender?.chat_id);
                 const activeChatId = Number(currentChatId);
 
+                // Обновляем превью в списке контактов для всех сообщений
+                updateContactPreview(msgChatId, msg.body.text || '', msg.timestamp);
+
+                // Добавляем сообщение в чат только если этот чат открыт
                 if (msgChatId === activeChatId) {
                     const container = document.getElementById('messages-container');
 
-                    // Проверяем, нет ли уже сообщения с таким текстом (защита от дублей)
                     const messageDiv = document.createElement('div');
 
                     // Уточняем логику: если sender_id совпадает с текущим контактом - incoming
@@ -494,9 +515,6 @@
                     container.appendChild(messageDiv);
                     container.scrollTop = container.scrollHeight;
                 }
-
-                // Обновляем список контактов слева
-                updateContactPreview(msgChatId, msg.body.text || '', msg.timestamp);
             } catch (e) {
                 console.error('SSE parse error', e);
             }
@@ -533,6 +551,8 @@
 
     loadContacts().then(() => {
         connectEventSource();
+        // Периодическое обновление списка контактов каждые 5 секунд
+        setInterval(loadContacts, 5000);
     });
 </script>
 </body>
