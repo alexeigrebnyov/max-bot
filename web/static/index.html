@@ -43,6 +43,26 @@
             font-size: 18px;
         }
 
+        .search-box {
+            padding: 10px 16px;
+            background: #f0f2f5;
+            border-bottom: 1px solid #e0e0e0;
+        }
+
+        .search-input {
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 20px;
+            font-size: 14px;
+            outline: none;
+            background: white;
+        }
+
+        .search-input:focus {
+            border-color: #4a76a8;
+        }
+
         .contact-item {
             display: flex;
             align-items: center;
@@ -233,6 +253,10 @@
 <div class="app">
     <div class="contacts-panel">
         <div class="contacts-header">Контакты</div>
+        <div class="search-box">
+            <input type="text" id="contact-search" class="search-input" placeholder="Поиск по имени, телефону, EMC..." style="margin-bottom: 8px;">
+            <input type="text" id="message-search" class="search-input" placeholder="Поиск по содержимому сообщений...">
+        </div>
         <div id="contacts-list"></div>
     </div>
     <div class="chat-panel">
@@ -605,6 +629,68 @@
         };
     }
 
+    // Фильтрация контактов по поисковому запросу
+    function filterContacts(searchQuery) {
+        const query = searchQuery.toLowerCase().trim();
+        const contactItems = document.querySelectorAll('.contact-item');
+
+        contactItems.forEach(item => {
+            const chatId = item.getAttribute('data-chat-id');
+            const contact = contactsMap.get(Number(chatId));
+
+            if (!contact) {
+                item.style.display = 'none';
+                return;
+            }
+
+            const name = (contact.Name || '').toLowerCase();
+            const phone = (contact.Phone || '').toLowerCase();
+            const emc = (contact.EMC || '').toLowerCase();
+
+            const matches = query === '' ||
+                           name.includes(query) ||
+                           phone.includes(query) ||
+                           emc.includes(query);
+
+            item.style.display = matches ? 'flex' : 'none';
+        });
+    }
+
+    // Фильтрация контактов по содержимому сообщений
+    async function filterContactsByMessages(searchQuery) {
+        const query = searchQuery.toLowerCase().trim();
+        const contactItems = document.querySelectorAll('.contact-item');
+
+        if (query === '') {
+            // Если поиск пустой, показываем все контакты
+            contactItems.forEach(item => item.style.display = 'flex');
+            return;
+        }
+
+        // Для каждого контакта проверяем, есть ли сообщения с искомым текстом
+        for (const item of contactItems) {
+            const chatId = item.getAttribute('data-chat-id');
+
+            try {
+                const resp = await fetch(`/get-messages-by-chatid?chat_id=${chatId}`);
+                if (!resp.ok) {
+                    item.style.display = 'none';
+                    continue;
+                }
+
+                const messages = await resp.json();
+                const hasMatch = messages.some(msg =>
+                    (msg.body.text || '').toLowerCase().includes(query)
+                );
+
+                item.style.display = hasMatch ? 'flex' : 'none';
+            } catch (err) {
+                console.error('filterContactsByMessages error:', err);
+                item.style.display = 'none';
+            }
+        }
+    }
+
     function closeChat() {
         currentChatId = null;
         currentUserId = null;
@@ -627,6 +713,20 @@
     document.getElementById('send-button').addEventListener('click', sendMessage);
     document.getElementById('message-input').addEventListener('keypress', (e) => {
         if (e.key === 'Enter') sendMessage();
+    });
+
+    // Поиск по контактам
+    document.getElementById('contact-search').addEventListener('input', (e) => {
+        filterContacts(e.target.value);
+        // Очищаем поиск по сообщениям
+        document.getElementById('message-search').value = '';
+    });
+
+    // Поиск по содержимому сообщений
+    document.getElementById('message-search').addEventListener('input', (e) => {
+        filterContactsByMessages(e.target.value);
+        // Очищаем поиск по контактам
+        document.getElementById('contact-search').value = '';
     });
 
     loadContacts().then(() => {
