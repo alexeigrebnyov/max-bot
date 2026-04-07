@@ -258,6 +258,7 @@
     let currentUserId = null;
     let eventSource = null;
     let contactsMap = new Map(); // key: chat_id, value: contact object
+    let lastMessageTimestamps = new Map(); // key: chat_id, value: timestamp последнего сообщения
 
     // Форматирование времени
     function formatTime(timestamp) {
@@ -289,7 +290,10 @@
             if (!resp.ok) return;
             const messages = await resp.json();
             if (messages && messages.length > 0) {
-                const lastMsg = messages[messages.length - 1];
+                // Находим сообщение с максимальным timestamp
+                const lastMsg = messages.reduce((latest, msg) => {
+                    return (msg.timestamp > latest.timestamp) ? msg : latest;
+                }, messages[0]);
                 updateContactPreview(chatId, lastMsg.body.text || '', lastMsg.timestamp);
             }
         } catch (err) {
@@ -501,6 +505,14 @@
 
     // Обновить последнее сообщение в списке контактов
     function updateContactPreview(chatId, text, timestamp) {
+        // Проверяем, не старше ли это сообщение, чем уже отображённое
+        const lastTimestamp = lastMessageTimestamps.get(chatId) || 0;
+        if (timestamp < lastTimestamp) {
+            return; // Игнорируем старые сообщения
+        }
+
+        lastMessageTimestamps.set(chatId, timestamp);
+
         const previewSpan = document.getElementById(`preview-${chatId}`);
         const timeSpan = document.getElementById(`time-${chatId}`);
         if (previewSpan) {
