@@ -53,9 +53,20 @@ func (b *EventBroker) broadcastLoop() {
 
 // ServeHTTP — вот здесь мы добавляем цикл с тикером
 func (b *EventBroker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	log.Printf("EventBroker: new client connected")
+
+	// Проверяем, поддерживает ли ResponseWriter flushing
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		log.Printf("EventBroker: ResponseWriter does not support flushing")
+		http.Error(w, "Streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
 
 	// Создаем канал для конкретного браузера
 	ch := make(chan []byte, 10)
@@ -68,17 +79,11 @@ func (b *EventBroker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		b.mu.Lock()
 		delete(b.clients, ch)
 		b.mu.Unlock()
-		// Канал закрывать не обязательно здесь, если вы используете select
+		log.Printf("EventBroker: client disconnected")
 	}()
 
-// Используем ResponseController для поддержки Flush даже через Middleware
-    rc := http.NewResponseController(w)
-
-    // Пробуем отправить первый Flush, чтобы убедиться, что всё работает
-    if err := rc.Flush(); err != nil {
-        http.Error(w, "Streaming not supported: "+err.Error(), http.StatusInternalServerError)
-        return
-    }
+	// Отправляем начальный flush
+	flusher.Flush()
 
 	// Инициализируем тикер для пинга
 	ticker := time.NewTicker(20 * time.Second)
@@ -90,12 +95,12 @@ func (b *EventBroker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case data := <-ch:
 			// Здесь 'data' — это то, что пришло из broadcastLoop
 			fmt.Fprintf(w, "data: %s\n\n", string(data))
-			rc.Flush()
+			flusher.Flush()
 
 		case <-ticker.C:
 			// Отправляем пустой комментарий (ping), чтобы браузер не закрыл соединение
 			fmt.Fprintf(w, ": ping\n\n")
-			rc.Flush()
+			flusher.Flush()
 
 		case <-r.Context().Done():
 			// Если пользователь закрыл вкладку браузера
