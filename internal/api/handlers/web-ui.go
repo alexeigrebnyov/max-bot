@@ -8,10 +8,6 @@ import (
 
 // WebUIHandler отдаёт HTML-страницу веб-интерфейса.
 type WebUIHandler struct{}
-//
-// func (h *WebUIHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-// 	http.ServeFile(w, r, filepath.Join("web", "static", "index.html"))
-// }
 
 type PageData struct {
 	Title   string
@@ -34,6 +30,27 @@ func (h *WebUIHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Execute the template, writing the output to the http.ResponseWriter
+	err = t.Execute(w, data)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+// MessagesUIHandler отдаёт HTML-страницу просмотра сообщений
+type MessagesUIHandler struct{}
+
+func (h *MessagesUIHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	t, err := template.ParseFiles("web/static/messages.html")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	data := PageData{
+		Title:   "Сообщения",
+		Content: "",
+	}
+
 	err = t.Execute(w, data)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)

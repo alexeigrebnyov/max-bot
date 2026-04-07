@@ -41,6 +41,22 @@
             border-bottom: 1px solid #e0e0e0;
             font-weight: 600;
             font-size: 18px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .nav-link {
+            color: #4a76a8;
+            text-decoration: none;
+            font-size: 14px;
+            padding: 6px 12px;
+            border-radius: 4px;
+            transition: background 0.2s;
+        }
+
+        .nav-link:hover {
+            background: #e9f0fe;
         }
 
         .search-box {
@@ -252,7 +268,10 @@
 <body>
 <div class="app">
     <div class="contacts-panel">
-        <div class="contacts-header">Контакты</div>
+        <div class="contacts-header">
+            <span>Контакты</span>
+            <a href="/messages" class="nav-link">Сообщения →</a>
+        </div>
         <div class="search-box">
             <input type="text" id="contact-search" class="search-input" placeholder="Поиск по имени, телефону, EMC..." style="margin-bottom: 8px;">
             <input type="text" id="message-search" class="search-input" placeholder="Поиск по содержимому сообщений...">
@@ -733,6 +752,25 @@
         connectEventSource();
         // Периодическое обновление списка контактов каждые 5 секунд
         setInterval(loadContacts, 5000);
+
+        // Проверяем URL параметры для автоматического открытия чата
+        const urlParams = new URLSearchParams(window.location.search);
+        const chatIdParam = urlParams.get('chat_id');
+        if (chatIdParam) {
+            const chatId = Number(chatIdParam);
+            const contact = contactsMap.get(chatId);
+            if (contact) {
+                openChat(
+                    chatId,
+                    contact.UserID,
+                    contact.Phone,
+                    contact.Name || contact.Phone,
+                    contact.Birthdate,
+                    contact.EMC,
+                    contact.AvatarURL
+                );
+            }
+        }
     });
 </script>
 </body>
