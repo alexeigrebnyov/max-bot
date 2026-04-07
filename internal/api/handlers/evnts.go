@@ -23,7 +23,9 @@ func NewEventBroker(botSrv *bot.Service) *EventBroker {
 		newMessages: botSrv.NewMessages,
 		botSrv:      botSrv,
 	}
-	go b.broadcastLoop()
+	if b.newMessages != nil {
+		go b.broadcastLoop()
+	}
 	return b
 }
 

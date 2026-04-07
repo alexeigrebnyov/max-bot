@@ -42,6 +42,7 @@ func NewService(storage *storage.Service, cfg *config.Config) *Service {
 		storage:       storage,
 		cfg:           cfg,
 		webhookSecret: cfg.WebhookSecret,
+		NewMessages:   make(chan *Message, 100),
 	}
 }
 
@@ -53,7 +54,6 @@ func (srv *Service) UseLongPolling() bool {
 func (srv *Service) Start(ctx context.Context) {
 	srv.BotModel = NewModel(srv.storage.Contacts, srv.cfg)
 	srv.Bot = srv.BotModel
-	srv.NewMessages = make(chan *Message, 100)
 
 	if err := srv.BotModel.FillInfo(ctx); err != nil {
 		log.Printf("failed to load bot info: %v", err)
