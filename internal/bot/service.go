@@ -848,6 +848,14 @@ func (srv *Service) handleMessageCreated(ctx context.Context, raw json.RawMessag
 		}
 	}
 
+	// Создаём запись о непрочитанном сообщении (только для входящих сообщений в диалогах)
+	if chatType == "dialog" && p.Body.Mid != "" {
+		// Сообщение от пользователя (не от бота) - помечаем как непрочитанное
+		if err := srv.storage.MessageStatus.CreateUnread(chat, p.Body.Mid); err != nil {
+			log.Printf("handleMessageCreated: failed to create message status: %v", err)
+		}
+	}
+
 	// Если это не личный диалог - дальнейшая обработка не нужна
 	if chatType != "dialog" {
 		return

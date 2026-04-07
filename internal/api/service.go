@@ -122,6 +122,9 @@ func (srv *Service) buildMux() http.Handler {
         Events: broker,
         })
     mux.Handle("/admin", &handlers.WebUIHandler{})
+    // Статусы сообщений:
+    mux.Handle("/mark-messages-read", &handlers.MarkMessagesReadHandler{MessageStatus: srv.Storage.MessageStatus})
+    mux.Handle("/unread-count", &handlers.GetUnreadCountHandler{MessageStatus: srv.Storage.MessageStatus})
 
 	var h http.Handler = mux
 	if srv.Metrics != nil {

@@ -19,9 +19,10 @@ const (
 )
 
 type Service struct {
-	Contacts     *tables.Contacts
-	GroupChats   *tables.GroupChats
-	AuthSessions *tables.AuthSessions
+	Contacts      *tables.Contacts
+	GroupChats    *tables.GroupChats
+	AuthSessions  *tables.AuthSessions
+	MessageStatus *tables.MessageStatus
 	// DataDir задаёт каталог для SQLite (для тестов — временная директория). Пустой — defaultDirectory.
 	DataDir string
 }
@@ -53,6 +54,7 @@ func (srv *Service) Start(ctx context.Context) {
 	srv.Contacts = tables.NewContacts(db)
 	srv.GroupChats = tables.NewGroupChats(db)
 	srv.AuthSessions = tables.NewAuthSessions(db)
+	srv.MessageStatus = tables.NewMessageStatus(db)
 
 	go func() {
 		<-ctx.Done()

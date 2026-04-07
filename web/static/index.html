@@ -103,6 +103,18 @@
             flex-shrink: 0;
         }
 
+        .unread-badge {
+            background: #25d366;
+            color: white;
+            border-radius: 10px;
+            padding: 2px 6px;
+            font-size: 11px;
+            font-weight: 600;
+            margin-left: 8px;
+            min-width: 20px;
+            text-align: center;
+        }
+
         /* Чат (правая панель) */
         .chat-panel {
             flex: 1;
@@ -285,6 +297,45 @@
         }
     }
 
+    // Загрузка количества непрочитанных сообщений
+    async function loadUnreadCount(chatId) {
+        try {
+            const resp = await fetch(`/unread-count?chat_id=${chatId}`);
+            if (!resp.ok) return;
+            const data = await resp.json();
+            updateUnreadBadge(chatId, data.unread_count || 0);
+        } catch (err) {
+            console.error('loadUnreadCount error:', err);
+        }
+    }
+
+    // Обновление бейджа с количеством непрочитанных
+    function updateUnreadBadge(chatId, count) {
+        const badge = document.getElementById(`unread-${chatId}`);
+        if (badge) {
+            if (count > 0) {
+                badge.textContent = count;
+                badge.style.display = 'block';
+            } else {
+                badge.style.display = 'none';
+            }
+        }
+    }
+
+    // Пометка всех сообщений чата как прочитанных
+    async function markChatAsRead(chatId) {
+        try {
+            await fetch('/mark-messages-read', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ chat_id: chatId, message_mids: [] })
+            });
+            updateUnreadBadge(chatId, 0);
+        } catch (err) {
+            console.error('markChatAsRead error:', err);
+        }
+    }
+
     // Рендер списка контактов
     function renderContacts(contacts) {
         // console.log(contacts)
@@ -326,12 +377,15 @@
                     <div class="contact-preview" id="preview-${chatId}">—</div>
                 </div>
                 <div class="contact-time" id="time-${chatId}"></div>
+                <div class="unread-badge" id="unread-${chatId}" style="display: none;">0</div>
             `;
             div.addEventListener('click', () => openChat(chatId, userId, phone, name, contact.Birthdate, emc, avatarUrl));
             container.appendChild(div);
 
             // Загружаем последнее сообщение для этого чата
             loadLastMessage(chatId);
+            // Загружаем количество непрочитанных сообщений
+            loadUnreadCount(chatId);
         });
 
         // Если был открыт чат, но его нет в списке — очищаем
@@ -372,6 +426,9 @@
 
         // Загрузить историю сообщений
         await loadMessages(chatId);
+
+        // Пометить все сообщения как прочитанные
+        await markChatAsRead(chatId);
     }
 
     // Загрузка сообщений по chat_id
@@ -514,6 +571,17 @@
             `;
                     container.appendChild(messageDiv);
                     container.scrollTop = container.scrollHeight;
+
+                    // Если это входящее сообщение, помечаем как прочитанное
+                    if (isIncoming) {
+                        markChatAsRead(msgChatId);
+                    }
+                } else {
+                    // Если чат не открыт, увеличиваем счётчик непрочитанных
+                    const isIncoming = msg.sender?.user_id !== 0; // Предполагаем, что бот имеет user_id
+                    if (isIncoming) {
+                        loadUnreadCount(msgChatId);
+                    }
                 }
             } catch (e) {
                 console.error('SSE parse error', e);
