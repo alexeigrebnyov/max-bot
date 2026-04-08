@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"max-bot-service/internal/bot"
+	"max-bot-service/internal/storage/tables"
 	"net/http"
 	"sync"
 	"time" // Не забудьте импортировать time
@@ -14,6 +15,7 @@ type EventBroker struct {
 	mu          sync.Mutex
 	clients     map[chan []byte]bool
 	newMessages chan *bot.Message
+	newContacts chan *tables.Contact
 	botSrv      *bot.Service
 }
 
@@ -21,34 +23,61 @@ func NewEventBroker(botSrv *bot.Service) *EventBroker {
 	b := &EventBroker{
 		clients:     make(map[chan []byte]bool),
 		newMessages: botSrv.NewMessages,
+		newContacts: botSrv.NewContacts,
 		botSrv:      botSrv,
 	}
 	if b.newMessages != nil {
-		go b.broadcastLoop()
+		go b.broadcastMessagesLoop()
+	}
+	if b.newContacts != nil {
+		go b.broadcastContactsLoop()
 	}
 	return b
 }
 
-// broadcastLoop остается почти как был — он просто рассылает данные по каналам
-func (b *EventBroker) broadcastLoop() {
+// broadcastMessagesLoop рассылает сообщения по каналам
+func (b *EventBroker) broadcastMessagesLoop() {
 	for msg := range b.newMessages {
-		data, err := json.Marshal(msg)
+		data, err := json.Marshal(map[string]interface{}{
+			"type": "message",
+			"data": msg,
+		})
 		if err != nil {
-			log.Printf("broadcastLoop: marshal error: %v", err)
+			log.Printf("broadcastMessagesLoop: marshal error: %v", err)
 			continue
 		}
-		b.mu.Lock()
-		for ch := range b.clients {
-			select {
-			case ch <- data:
-			default:
-				// Если клиент не успевает читать, удаляем его
-				close(ch)
-				delete(b.clients, ch)
-			}
-		}
-		b.mu.Unlock()
+		b.broadcast(data)
 	}
+}
+
+// broadcastContactsLoop рассылает обновления контактов по каналам
+func (b *EventBroker) broadcastContactsLoop() {
+	for contact := range b.newContacts {
+		data, err := json.Marshal(map[string]interface{}{
+			"type": "contact_update",
+			"data": contact,
+		})
+		if err != nil {
+			log.Printf("broadcastContactsLoop: marshal error: %v", err)
+			continue
+		}
+		b.broadcast(data)
+	}
+}
+
+// broadcast отправляет данные всем подключенным клиентам
+func (b *EventBroker) broadcast(data []byte) {
+	b.mu.Lock()
+	for ch := range b.clients {
+		select {
+		case ch <- data:
+		default:
+			// Если клиент не успевает читать, удаляем его
+			close(ch)
+			delete(b.clients, ch)
+		}
+	}
+	b.mu.Unlock()
 }
 
 // ServeHTTP — вот здесь мы добавляем цикл с тикером

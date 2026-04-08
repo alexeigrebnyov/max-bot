@@ -35,6 +35,7 @@ type Service struct {
 	webhookSecret string
 	cfg           *config.Config
 	NewMessages chan *Message
+	NewContacts chan *tables.Contact
 }
 
 func NewService(storage *storage.Service, cfg *config.Config) *Service {
@@ -43,6 +44,7 @@ func NewService(storage *storage.Service, cfg *config.Config) *Service {
 		cfg:           cfg,
 		webhookSecret: cfg.WebhookSecret,
 		NewMessages:   make(chan *Message, 100),
+		NewContacts:   make(chan *tables.Contact, 100),
 	}
 }
 
@@ -886,6 +888,18 @@ func (srv *Service) handleMessageCreated(ctx context.Context, raw json.RawMessag
 	log.Printf("handleMessageCreated: no session and not /start, ignoring message from userID=%d", userID)
 }
 
+// notifyContactUpdate отправляет обновление контакта в канал NewContacts
+func (srv *Service) notifyContactUpdate(contact *tables.Contact) {
+	if srv.NewContacts != nil && contact != nil {
+		select {
+		case srv.NewContacts <- contact:
+			log.Printf("notifyContactUpdate: sent contact update for userID=%d", contact.UserID)
+		default:
+			log.Printf("notifyContactUpdate: NewContacts channel full, dropping contact update")
+		}
+	}
+}
+
 // handleStartCommand обрабатывает команду /start
 func (srv *Service) handleStartCommand(ctx context.Context, userID int64, chatKey string, payload string, name string, avatar string) {
 	// Вариант 1: Payload содержит emchash_{value}
@@ -1039,6 +1053,9 @@ func (srv *Service) handleAwaitingPhoneEMCHash(ctx context.Context, session *tab
 		return
 	}
 
+	// Отправляем обновление контакта в EventSource
+	srv.notifyContactUpdate(contact)
+
 	log.Printf("avatar from handleAwaitingPhoneEMCHash %s ", avatar)
 
 	// Успешная авторизация
@@ -1152,6 +1169,9 @@ func (srv *Service) handleAwaitingBirthdate(ctx context.Context, session *tables
 		srv.sendAuthError(ctx, chatKey)
 		return
 	}
+
+	// Отправляем обновление контакта в EventSource
+	srv.notifyContactUpdate(contact)
 
 	// Успешная авторизация
 	srv.storage.AuthSessions.Delete(userID)
@@ -1343,6 +1363,15 @@ func (srv *Service) saveContact(ctx context.Context, chatID string, userID int64
 		text = "Не удалось сохранить номер телефона 😞"
 	} else {
 		text = "Номер телефона успешно сохранен!"
+		// Отправляем обновление контакта в EventSource
+		srv.notifyContactUpdate(&tables.Contact{
+			UserID:    userID,
+			ChatID:    chatIDInt,
+			Phone:     phone,
+			Name:      name,
+			EMC:       emc,
+			AvatarURL: avatar,
+		})
 	}
 
 	kb := keyboard{
@@ -1388,10 +1417,12 @@ func (srv *Service) saveContactByEMCHash(ctx context.Context, chatID string, use
 		} else {
 			log.Printf("saveContactByEMCHash: updated contact for emchash=%s userID=%d", emchash, userID)
 			text = "Контакт успешно обновлен! Теперь вы можете получать уведомления."
+			// Отправляем обновление контакта в EventSource
+			srv.notifyContactUpdate(existingContact)
 		}
 	} else {
 		// Создаем новый контакт (без телефона, только emchash)
-		_, err = srv.storage.Contacts.Save(&tables.Contact{
+		newContact := &tables.Contact{
 			UserID:    userID,
 			ChatID:    chatIDInt,
 			Phone:     "", // телефон пока неизвестен
@@ -1399,13 +1430,16 @@ func (srv *Service) saveContactByEMCHash(ctx context.Context, chatID string, use
 			EMC:       "",
 			AvatarURL: avatar,
 			EMCHash:   emchash,
-		})
+		}
+		_, err = srv.storage.Contacts.Save(newContact)
 		if err != nil {
 			log.Printf("saveContactByEMCHash: save error: %v", err)
 			text = "Не удалось сохранить контакт 😞"
 		} else {
 			log.Printf("saveContactByEMCHash: created contact for emchash=%s userID=%d", emchash, userID)
 			text = "Контакт успешно создан! Теперь вы можете получать уведомления."
+			// Отправляем обновление контакта в EventSource
+			srv.notifyContactUpdate(newContact)
 		}
 	}
 

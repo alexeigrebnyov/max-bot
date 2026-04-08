@@ -51,6 +51,20 @@ func (srv *Service) Start(ctx context.Context) {
 		log.Fatal(err)
 	}
 
+	// Настройка SQLite для лучшей конкурентности
+	db.SetMaxOpenConns(1) // SQLite поддерживает только одно соединение для записи
+	db.SetMaxIdleConns(1)
+
+	// Включаем WAL mode для лучшей конкурентности
+	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
+		log.Printf("Warning: failed to enable WAL mode: %v", err)
+	}
+
+	// Увеличиваем таймаут для занятой БД
+	if _, err := db.Exec("PRAGMA busy_timeout=5000"); err != nil {
+		log.Printf("Warning: failed to set busy_timeout: %v", err)
+	}
+
 	srv.Contacts = tables.NewContacts(db)
 	srv.GroupChats = tables.NewGroupChats(db)
 	srv.AuthSessions = tables.NewAuthSessions(db)

@@ -327,7 +327,8 @@
 
             const div = document.createElement('div');
             div.className = 'message-group';
-            div.onclick = () => openChat(msg.chatId);
+            div.setAttribute('data-mid', msg.body.mid || '');
+            div.onclick = () => openChat(msg.chatId, msg.body.mid);
 
             const avatarHtml = avatarUrl
                 ? `<img src="${escapeHtml(avatarUrl)}" alt="${escapeHtml(name)}" style="width:40px;height:40px;border-radius:50%;object-fit:cover;">`
@@ -349,8 +350,9 @@
     }
 
     // Открыть чат на странице index.html
-    function openChat(chatId) {
-        window.location.href = `/admin?chat_id=${chatId}`;
+    function openChat(chatId, mid) {
+        const url = mid ? `/admin?chat_id=${chatId}&message_mid=${mid}` : `/admin?chat_id=${chatId}`;
+        window.location.href = url;
     }
 
     // Обработчики фильтров
