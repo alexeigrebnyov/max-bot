@@ -1038,11 +1038,12 @@ func (srv *Service) handleAwaitingPhoneEMCHash(ctx context.Context, session *tab
 		return
 	}
 
-	// Телефон совпал - обновляем только UserID, ChatID и AvatarURL
+	// Телефон совпал - обновляем только UserID, ChatID, AvatarURL и устанавливаем Authorized
 	chatIDInt, _ := strconv.ParseInt(chatKey, 10, 64)
 	contact.UserID = userID
 	contact.ChatID = chatIDInt
 	contact.AvatarURL = avatar
+	contact.Authorized = true
 
 
 
@@ -1160,11 +1161,12 @@ func (srv *Service) handleAwaitingBirthdate(ctx context.Context, session *tables
 		return
 	}
 
-	// Дата рождения совпала - обновляем только UserID, ChatID и AvatarURL
+	// Дата рождения совпала - обновляем только UserID, ChatID, AvatarURL и устанавливаем Authorized
 	chatIDInt, _ := strconv.ParseInt(chatKey, 10, 64)
 	contact.UserID = userID
 	contact.ChatID = chatIDInt
 	contact.AvatarURL = avatar
+	contact.Authorized = true
 
 	if _, err := srv.storage.Contacts.Save(contact); err != nil {
 		log.Printf("handleAwaitingBirthdate: Save error: %v", err)
@@ -1412,6 +1414,7 @@ func (srv *Service) saveContactByEMCHash(ctx context.Context, chatID string, use
 		existingContact.Name = name
 		existingContact.AvatarURL = avatar
 		existingContact.EMCHash = emchash
+		existingContact.Authorized = true
 
 		_, err = srv.storage.Contacts.Save(existingContact)
 		if err != nil {
@@ -1426,13 +1429,14 @@ func (srv *Service) saveContactByEMCHash(ctx context.Context, chatID string, use
 	} else {
 		// Создаем новый контакт (без телефона, только emchash)
 		newContact := &tables.Contact{
-			UserID:    userID,
-			ChatID:    chatIDInt,
-			Phone:     "", // телефон пока неизвестен
-			Name:      name,
-			EMC:       "",
-			AvatarURL: avatar,
-			EMCHash:   emchash,
+			UserID:     userID,
+			ChatID:     chatIDInt,
+			Phone:      "", // телефон пока неизвестен
+			Name:       name,
+			EMC:        "",
+			AvatarURL:  avatar,
+			EMCHash:    emchash,
+			Authorized: true,
 		}
 		_, err = srv.storage.Contacts.Save(newContact)
 		if err != nil {
