@@ -992,7 +992,7 @@ func (srv *Service) handleAuthSession(ctx context.Context, session *tables.AuthS
 
 // handleAwaitingPhoneEMCHash обрабатывает ввод телефона (вариант с emchash)
 func (srv *Service) handleAwaitingPhoneEMCHash(ctx context.Context, session *tables.AuthSession, userID int64, chatKey string, text string, name string, avatar string) {
-
+    chat := strconv.FormatInt(userID, 10)
 	// Извлекаем телефон из текста
 	phone := srv.extractPhoneFromText(text)
 	if phone == "" {
@@ -1005,7 +1005,7 @@ func (srv *Service) handleAwaitingPhoneEMCHash(ctx context.Context, session *tab
 			return
 		}
 		srv.storage.AuthSessions.Save(session)
-		srv.Bot.SendMessage(ctx, chatKey, 0, "Неверный формат телефона. Попробуйте ещё раз.", true)
+		srv.Bot.SendMessage(ctx, chat, 0, "Неверный формат телефона. Попробуйте ещё раз.", true)
 		return
 	}
 
@@ -1034,7 +1034,7 @@ func (srv *Service) handleAwaitingPhoneEMCHash(ctx context.Context, session *tab
 			return
 		}
 		srv.storage.AuthSessions.Save(session)
-		srv.Bot.SendMessage(ctx, chatKey, 0, "Неверный номер телефона. Попробуйте ещё раз.", true)
+		srv.Bot.SendMessage(ctx, chat, 0, "Неверный номер телефона. Попробуйте ещё раз.", true)
 		return
 	}
 
@@ -1067,13 +1067,14 @@ func (srv *Service) handleAwaitingPhoneEMCHash(ctx context.Context, session *tab
 // 		},
 // 	}
 // 	srv.Bot.SendMessageWithKeyboard(ctx, chatKey, successText, kb, false)
-    srv.Bot.SendMessage(ctx, chatKey, 0, successText, true)
+    srv.Bot.SendMessage(ctx, chat, 0, successText, true)
 	log.Printf("handleAwaitingPhoneEMCHash: success for userID=%d emchash=%s", userID, session.EMCHash)
 }
 
 // handleAwaitingPhoneEmpty обрабатывает ввод телефона (вариант без payload)
 func (srv *Service) handleAwaitingPhoneEmpty(ctx context.Context, session *tables.AuthSession, userID int64, chatKey string, text string, name string, avatar string) {
 	// Извлекаем телефон из текста
+	chat := strconv.FormatInt(userID, 10)
 	phone := srv.extractPhoneFromText(text)
 	if phone == "" {
 		log.Printf("handleAwaitingPhoneEmpty: invalid phone format")
@@ -1085,7 +1086,7 @@ func (srv *Service) handleAwaitingPhoneEmpty(ctx context.Context, session *table
 			return
 		}
 		srv.storage.AuthSessions.Save(session)
-		srv.Bot.SendMessage(ctx, chatKey, 0, "Неверный формат телефона. Попробуйте ещё раз.", true)
+		srv.Bot.SendMessage(ctx, chat, 0, "Неверный формат телефона. Попробуйте ещё раз.", true)
 		return
 	}
 
@@ -1112,11 +1113,13 @@ func (srv *Service) handleAwaitingPhoneEmpty(ctx context.Context, session *table
 
 	// Запрашиваем дату рождения
 	prompt := "Напишите дату Вашего рождения в формате дд.мм.гггг"
-	srv.Bot.SendMessage(ctx, chatKey, 0, prompt, true)
+	srv.Bot.SendMessage(ctx, chat, 0, prompt, true)
 }
 
 // handleAwaitingBirthdate обрабатывает ввод даты рождения
 func (srv *Service) handleAwaitingBirthdate(ctx context.Context, session *tables.AuthSession, userID int64, chatKey string, text string, name string, avatar string) {
+
+    chat := strconv.FormatInt(userID, 10)
 	// Парсим дату рождения
 	birthdate := srv.parseBirthdate(text)
 	if birthdate == "" {
@@ -1129,7 +1132,7 @@ func (srv *Service) handleAwaitingBirthdate(ctx context.Context, session *tables
 			return
 		}
 		srv.storage.AuthSessions.Save(session)
-		srv.Bot.SendMessage(ctx, chatKey, 0, "Неверный формат даты. Используйте формат дд.мм.гггг (например, 01.01.1990). Попробуйте ещё раз.", true)
+		srv.Bot.SendMessage(ctx, chat, 0, "Неверный формат даты. Используйте формат дд.мм.гггг (например, 01.01.1990). Попробуйте ещё раз.", true)
 		return
 	}
 
@@ -1153,7 +1156,7 @@ func (srv *Service) handleAwaitingBirthdate(ctx context.Context, session *tables
 			return
 		}
 		srv.storage.AuthSessions.Save(session)
-		srv.Bot.SendMessage(ctx, chatKey, 0, "Неверная дата рождения. Попробуйте ещё раз.", true)
+		srv.Bot.SendMessage(ctx, chat, 0, "Неверная дата рождения. Попробуйте ещё раз.", true)
 		return
 	}
 
@@ -1182,7 +1185,7 @@ func (srv *Service) handleAwaitingBirthdate(ctx context.Context, session *tables
 // 		},
 // 	}
 // 	srv.Bot.SendMessageWithKeyboard(ctx, chatKey, successText, kb, false)
-    srv.Bot.SendMessage(ctx, chatKey, 0, successText, true)
+    srv.Bot.SendMessage(ctx, chat, 0, successText, true)
 
 	log.Printf("handleAwaitingBirthdate: success for userID=%d phone=%s", userID, session.Phone)
 }
