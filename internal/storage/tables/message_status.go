@@ -38,11 +38,11 @@ func NewMessageStatus(db *sql.DB) *MessageStatus {
 	return &MessageStatus{database: db}
 }
 
-// MarkAsRead помечает сообщение как прочитанное
+// MarkAsRead удаляет запись о непрочитанном сообщении (помечает как прочитанное)
 func (table *MessageStatus) MarkAsRead(chatID int64, messageMid string, readAt int64) error {
 	_, err := table.database.Exec(
-		"INSERT OR REPLACE INTO message_status (chat_id, message_mid, is_read, read_at) VALUES (?, ?, 1, ?)",
-		chatID, messageMid, readAt,
+		"DELETE FROM message_status WHERE chat_id = ? AND message_mid = ?",
+		chatID, messageMid,
 	)
 	return err
 }
@@ -53,25 +53,32 @@ func (table *MessageStatus) CreateUnread(chatID int64, messageMid string) error 
 		"INSERT OR IGNORE INTO message_status (chat_id, message_mid, is_read, read_at) VALUES (?, ?, 0, NULL)",
 		chatID, messageMid,
 	)
+	if err == nil {
+	    log.Printf("handleMessageCreated: created message chatIDs: %d, messageMid%s", chatID, messageMid)
+	}
 	return err
 }
 
-// MarkMultipleAsRead помечает несколько сообщений как прочитанные
+// MarkMultipleAsRead удаляет записи о непрочитанных сообщениях (помечает как прочитанные)
 func (table *MessageStatus) MarkMultipleAsRead(chatID int64, messageMids []string, readAt int64) error {
+	if len(messageMids) == 0 {
+		return nil
+	}
+
 	tx, err := table.database.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 
-	stmt, err := tx.Prepare("INSERT OR REPLACE INTO message_status (chat_id, message_mid, is_read, read_at) VALUES (?, ?, 1, ?)")
+	stmt, err := tx.Prepare("DELETE FROM message_status WHERE chat_id = ? AND message_mid = ?")
 	if err != nil {
 		return err
 	}
 	defer stmt.Close()
 
 	for _, mid := range messageMids {
-		if _, err := stmt.Exec(chatID, mid, readAt); err != nil {
+		if _, err := stmt.Exec(chatID, mid); err != nil {
 			return err
 		}
 	}
@@ -118,11 +125,39 @@ func (table *MessageStatus) GetUnreadCount(chatID int64) (int, error) {
 	return count, err
 }
 
-// MarkAllAsRead помечает все сообщения чата как прочитанные
+// MarkAllAsRead удаляет все записи о непрочитанных сообщениях чата (помечает все как прочитанные)
 func (table *MessageStatus) MarkAllAsRead(chatID int64, readAt int64) error {
 	_, err := table.database.Exec(
-		"UPDATE message_status SET is_read = 1, read_at = ? WHERE chat_id = ? AND is_read = 0",
-		readAt, chatID,
+		"DELETE FROM message_status WHERE chat_id = ?",
+		chatID,
 	)
 	return err
+}
+
+// UnreadMessage содержит информацию о непрочитанном сообщении
+type UnreadMessage struct {
+	ChatID     int64  `json:"chat_id"`
+	MessageMid string `json:"message_mid"`
+}
+
+// GetUnreadMessages возвращает список всех непрочитанных сообщений
+func (table *MessageStatus) GetUnreadMessages() ([]UnreadMessage, error) {
+	rows, err := table.database.Query(
+		"SELECT chat_id, message_mid FROM message_status ORDER BY chat_id",
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var messages []UnreadMessage
+	for rows.Next() {
+		var msg UnreadMessage
+		if err := rows.Scan(&msg.ChatID, &msg.MessageMid); err != nil {
+			return nil, err
+		}
+		messages = append(messages, msg)
+	}
+
+	return messages, rows.Err()
 }

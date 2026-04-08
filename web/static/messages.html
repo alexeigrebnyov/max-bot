@@ -205,6 +205,7 @@
 
 <script>
     let allMessages = [];
+    let unreadMessages = []; // Непрочитанные сообщения из БД бота
     let contacts = new Map();
     let currentFilter = 'all';
     let contactSearchQuery = '';
@@ -276,21 +277,73 @@
         }
     }
 
+    // Загрузка непрочитанных сообщений из БД бота
+    async function loadUnreadMessages() {
+        try {
+            const resp = await fetch('/unread-messages');
+            if (!resp.ok) {
+                console.error('loadUnreadMessages: failed to fetch');
+                return;
+            }
+
+            const data = await resp.json();
+            if (data.status !== 'ok') {
+                console.error('loadUnreadMessages: bad status', data);
+                return;
+            }
+
+            unreadMessages = [];
+
+            // Для каждого непрочитанного сообщения получаем полную информацию
+            for (const unread of data.messages) {
+                const contact = contacts.get(unread.chat_id);
+                if (!contact) continue;
+
+                // Получаем все сообщения чата
+                const resp = await fetch(`/get-messages-by-chatid?chat_id=${unread.chat_id}`);
+                if (!resp.ok) continue;
+
+                const messages = await resp.json();
+
+                // Находим конкретное непрочитанное сообщение
+                const msg = messages.find(m => m.body.mid === unread.message_mid);
+                if (msg) {
+                    unreadMessages.push({
+                        ...msg,
+                        chatId: unread.chat_id,
+                        contact: contact
+                    });
+                }
+            }
+
+            // Сортируем по времени (новые сначала)
+            unreadMessages.sort((a, b) => b.timestamp - a.timestamp);
+
+            renderMessages();
+        } catch (err) {
+            console.error('loadUnreadMessages error:', err);
+        }
+    }
+
     // Фильтрация и рендер сообщений
     function renderMessages() {
         const container = document.getElementById('messages-container');
 
-        let filtered = allMessages.filter(msg => {
-            // Фильтр по типу
-            if (currentFilter === 'unread') {
-                // Показываем только непрочитанные сообщения
-                return !msg.is_read;
-            } else if (currentFilter === 'sent') {
-                // Отправленные сообщения (от бота)
-                return msg.sender && msg.sender.is_bot;
-            }
-            return true;
-        });
+        let filtered;
+
+        // Для непрочитанных используем отдельный массив из БД
+        if (currentFilter === 'unread') {
+            filtered = unreadMessages;
+        } else {
+            // Для остальных фильтров используем allMessages
+            filtered = allMessages.filter(msg => {
+                if (currentFilter === 'sent') {
+                    // Отправленные сообщения (от бота)
+                    return msg.sender && msg.sender.is_bot;
+                }
+                return true; // 'all'
+            });
+        }
 
         // Фильтр по контакту
         if (contactSearchQuery) {
@@ -357,11 +410,17 @@
 
     // Обработчики фильтров
     document.querySelectorAll('.filter-tab').forEach(tab => {
-        tab.addEventListener('click', () => {
+        tab.addEventListener('click', async () => {
             document.querySelectorAll('.filter-tab').forEach(t => t.classList.remove('active'));
             tab.classList.add('active');
             currentFilter = tab.getAttribute('data-filter');
-            renderMessages();
+
+            // Если переключились на "непрочитанные", загружаем их из БД
+            if (currentFilter === 'unread') {
+                await loadUnreadMessages();
+            } else {
+                renderMessages();
+            }
         });
     });
 

@@ -93,3 +93,28 @@ func (h *GetUnreadCountHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]int{"unread_count": count})
 }
+
+// GetUnreadMessagesHandler обрабатывает GET /unread-messages
+type GetUnreadMessagesHandler struct {
+	MessageStatus *tables.MessageStatus
+}
+
+func (h *GetUnreadMessagesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	messages, err := h.MessageStatus.GetUnreadMessages()
+	if err != nil {
+		log.Printf("GetUnreadMessagesHandler error: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":   "ok",
+		"messages": messages,
+	})
+}
