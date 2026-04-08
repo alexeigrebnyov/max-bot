@@ -294,25 +294,14 @@
 
             unreadMessages = [];
 
-            // Для каждого непрочитанного сообщения получаем полную информацию
+            // Ищем непрочитанные сообщения в уже загруженном массиве allMessages
             for (const unread of data.messages) {
-                const contact = contacts.get(unread.chat_id);
-                if (!contact) continue;
+                const msg = allMessages.find(m =>
+                    m.chatId === unread.chat_id && m.body.mid === unread.message_mid
+                );
 
-                // Получаем все сообщения чата
-                const resp = await fetch(`/get-messages-by-chatid?chat_id=${unread.chat_id}`);
-                if (!resp.ok) continue;
-
-                const messages = await resp.json();
-
-                // Находим конкретное непрочитанное сообщение
-                const msg = messages.find(m => m.body.mid === unread.message_mid);
                 if (msg) {
-                    unreadMessages.push({
-                        ...msg,
-                        chatId: unread.chat_id,
-                        contact: contact
-                    });
+                    unreadMessages.push(msg);
                 }
             }
 
