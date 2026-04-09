@@ -430,7 +430,7 @@
             div.innerHTML = `
                 ${avatarHtml}
                 <div class="contact-info">
-                    <div class="contact-name">${escapeHtml(name)}</div>
+                    <div class="contact-name">${'ЭМК '+escapeHtml(emc)}</div>
                     <div class="contact-preview" id="preview-${chatId}">—</div>
                 </div>
                 <div class="contact-time" id="time-${chatId}"></div>
@@ -476,10 +476,11 @@
         }
 
         // Имя, дата рождения и телефон
-        document.getElementById('chat-name').textContent = name;
+
         const phoneText = phone || `User ID: ${userId}`;
-        const birthdateText = birthdate ? ` • ДР: ${birthdate}` : '';
-        document.getElementById('chat-phone').textContent = phoneText + birthdateText;
+        const birthdateText = birthdate ? ` • ${birthdate} г.р.` : '';
+        document.getElementById('chat-phone').textContent = phoneText;
+        document.getElementById('chat-name').textContent = `ЭМК ${emc} ${name} ${birthdateText}`;
 
         // Загрузить историю сообщений
         await loadMessages(chatId);
