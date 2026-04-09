@@ -294,6 +294,7 @@
 
             unreadMessages = [];
 
+            if (Symbol.iterator in Object(data.messages)) {
             // Ищем непрочитанные сообщения в уже загруженном массиве allMessages
             for (const unread of data.messages) {
                 const msg = allMessages.find(m =>
@@ -307,6 +308,7 @@
 
             // Сортируем по времени (новые сначала)
             unreadMessages.sort((a, b) => b.timestamp - a.timestamp);
+            }
 
             renderMessages();
         } catch (err) {
@@ -318,10 +320,13 @@
     function renderMessages() {
         const container = document.getElementById('messages-container');
 
+
+
         let filtered;
 
         // Для непрочитанных используем отдельный массив из БД
         if (currentFilter === 'unread') {
+
             filtered = unreadMessages;
         } else {
             // Для остальных фильтров используем allMessages

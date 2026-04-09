@@ -1005,7 +1005,7 @@ func (srv *Service) handleAwaitingPhoneEMCHash(ctx context.Context, session *tab
 			return
 		}
 		srv.storage.AuthSessions.Save(session)
-		srv.Bot.SendMessage(ctx, chat, 0, "Неверный формат телефона. Попробуйте ещё раз.", true)
+		srv.Bot.SendMessage(ctx, chat, 0, "Неверный формат телефона. Попробуйте ещё раз.", false)
 		return
 	}
 
@@ -1034,7 +1034,7 @@ func (srv *Service) handleAwaitingPhoneEMCHash(ctx context.Context, session *tab
 			return
 		}
 		srv.storage.AuthSessions.Save(session)
-		srv.Bot.SendMessage(ctx, chat, 0, "Неверный номер телефона. Попробуйте ещё раз.", true)
+		srv.Bot.SendMessage(ctx, chat, 0, "Неверный номер телефона. Попробуйте ещё раз.", false)
 		return
 	}
 
@@ -1068,7 +1068,7 @@ func (srv *Service) handleAwaitingPhoneEMCHash(ctx context.Context, session *tab
 // 		},
 // 	}
 // 	srv.Bot.SendMessageWithKeyboard(ctx, chatKey, successText, kb, false)
-    srv.Bot.SendMessage(ctx, chat, 0, successText, true)
+    srv.Bot.SendMessage(ctx, chat, 0, successText, false)
 	log.Printf("handleAwaitingPhoneEMCHash: success for userID=%d emchash=%s", userID, session.EMCHash)
 }
 
@@ -1087,7 +1087,7 @@ func (srv *Service) handleAwaitingPhoneEmpty(ctx context.Context, session *table
 			return
 		}
 		srv.storage.AuthSessions.Save(session)
-		srv.Bot.SendMessage(ctx, chat, 0, "Неверный формат телефона. Попробуйте ещё раз.", true)
+		srv.Bot.SendMessage(ctx, chat, 0, "Неверный формат телефона. Попробуйте ещё раз.", false)
 		return
 	}
 
@@ -1114,7 +1114,7 @@ func (srv *Service) handleAwaitingPhoneEmpty(ctx context.Context, session *table
 
 	// Запрашиваем дату рождения
 	prompt := "Напишите дату Вашего рождения в формате дд.мм.гггг"
-	srv.Bot.SendMessage(ctx, chat, 0, prompt, true)
+	srv.Bot.SendMessage(ctx, chat, 0, prompt, false)
 }
 
 // handleAwaitingBirthdate обрабатывает ввод даты рождения
@@ -1133,7 +1133,7 @@ func (srv *Service) handleAwaitingBirthdate(ctx context.Context, session *tables
 			return
 		}
 		srv.storage.AuthSessions.Save(session)
-		srv.Bot.SendMessage(ctx, chat, 0, "Неверный формат даты. Используйте формат дд.мм.гггг (например, 01.01.1990). Попробуйте ещё раз.", true)
+		srv.Bot.SendMessage(ctx, chat, 0, "Неверный формат даты. Используйте формат дд.мм.гггг (например, 01.01.1990). Попробуйте ещё раз.", false)
 		return
 	}
 
@@ -1157,7 +1157,7 @@ func (srv *Service) handleAwaitingBirthdate(ctx context.Context, session *tables
 			return
 		}
 		srv.storage.AuthSessions.Save(session)
-		srv.Bot.SendMessage(ctx, chat, 0, "Неверная дата рождения. Попробуйте ещё раз.", true)
+		srv.Bot.SendMessage(ctx, chat, 0, "Неверная дата рождения. Попробуйте ещё раз.", false)
 		return
 	}
 
@@ -1187,7 +1187,7 @@ func (srv *Service) handleAwaitingBirthdate(ctx context.Context, session *tables
 // 		},
 // 	}
 // 	srv.Bot.SendMessageWithKeyboard(ctx, chatKey, successText, kb, false)
-    srv.Bot.SendMessage(ctx, chat, 0, successText, true)
+    srv.Bot.SendMessage(ctx, chat, 0, successText, false)
 
 	log.Printf("handleAwaitingBirthdate: success for userID=%d phone=%s", userID, session.Phone)
 }

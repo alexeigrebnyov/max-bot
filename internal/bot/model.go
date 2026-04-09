@@ -171,7 +171,7 @@ func (m *Model) SendMessage(ctx context.Context, chat string, thread int, text s
 		}
 		if contact == nil {
 			log.Printf("SendMessage: no contact found for key=%s", chat)
-			return fmt.Errorf("contact not found for phone %q", chat)
+			return fmt.Errorf("contact not found for key %q", chat)
 		}
 		originalKey := chat
 		chat = strconv.FormatInt(contact.UserID, 10)
