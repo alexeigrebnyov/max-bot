@@ -48,3 +48,4 @@ data/bot/*.db-journal
 *.local.yaml
 *.local.yml
 config.local.json
+/.claude/
