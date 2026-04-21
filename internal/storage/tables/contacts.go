@@ -273,3 +273,27 @@ func (table *Contacts) All() ([]*Contact, error) {
 	}
 	return contacts, nil
 }
+
+// AllContacts возвращает все контакты из таблицы без фильтрации по authorized.
+func (table *Contacts) AllContacts() ([]*Contact, error) {
+	rows, err := table.database.Query("SELECT userID, chatID, phone, name, COALESCE(emc, ''), COALESCE(avatar_url, ''), COALESCE(emchash, ''), COALESCE(birthdate, ''), COALESCE(authorized, 0) FROM contacts")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var contacts []*Contact
+	for rows.Next() {
+		var c Contact
+		var authorized int
+		if err := rows.Scan(&c.UserID, &c.ChatID, &c.Phone, &c.Name, &c.EMC, &c.AvatarURL, &c.EMCHash, &c.Birthdate, &authorized); err != nil {
+			return nil, err
+		}
+		c.Authorized = authorized == 1
+		contacts = append(contacts, &c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return contacts, nil
+}
