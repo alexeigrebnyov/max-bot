@@ -1,1 +1,0 @@
-- [Project Structure](project_structure.md) — Архитектура max-bot-service, граф зависимостей и быстрый поиск кода
