@@ -24,6 +24,7 @@ type addContactRequest struct {
 	AvatarURL string `json:"avatar_url"`
 	EMCHash   string `json:"emchash"`
 	Birthdate string `json:"birthdate"` // формат: dd.mm.yyyy
+	Authorized bool `json:"authorized"` // формат: dd.mm.yyyy
 }
 
 func (h *AddContactHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -55,6 +56,7 @@ func (h *AddContactHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		AvatarURL: req.AvatarURL,
 		EMCHash:   req.EMCHash,
 		Birthdate: req.Birthdate,
+		Authorized: req.Authorized,
 	}
 
 	_, err := h.Contacts.Save(contact)

@@ -115,6 +115,7 @@ func (srv *Service) buildMux() http.Handler {
 	mux.Handle("/update-contact", &handlers.UpdateContactHandler{Contacts: srv.Storage.Contacts})
     mux.Handle("/get-contact", &handlers.GetContactHandler{Contacts: srv.Storage.Contacts})
     mux.Handle("/contacts", &handlers.ContactsHandler{Contacts: srv.Storage.Contacts})
+    mux.Handle("/all-contacts", &handlers.AllContactsHandler{Contacts: srv.Storage.Contacts})
     // Новые:
     mux.Handle("/events", broker)
     mux.Handle("/send-chat-message", &handlers.SendChatMessageHandler{

@@ -82,3 +82,29 @@ func (h *ContactsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		"contacts": contacts,
 	})
 }
+
+type AllContactsHandler struct {
+	Contacts *tables.Contacts
+}
+
+func (h *AllContactsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	contacts, err := h.Contacts.AllContacts()
+	if err != nil {
+		log.Printf("all-contacts: AllContacts error: %v", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "database error"})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":   "ok",
+		"contacts": contacts,
+	})
+}
