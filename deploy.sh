@@ -38,6 +38,14 @@ if [ "$BACKUP" = "yes" ] && [ -f "$DB_FILE" ]; then
     echo "✅ Бэкап создан"
 fi
 
+# --- ЗАЩИТА БАЗЫ ДАННЫХ ПРИ ОБНОВЛЕНИИ GIT ---
+# Временно перемещаем БД, чтобы git pull не пытался её затронуть
+DB_TEMP="/tmp/max_bot_storage_db_temp"
+if [ -f "$DB_FILE" ]; then
+    echo "🛡️  Временное перемещение БД для безопасного git pull..."
+    mv "$DB_FILE" "$DB_TEMP"
+fi
+
 # Остановка и удаление старого контейнера
 echo "🛑 Остановка контейнера..."
 if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
@@ -54,6 +62,14 @@ git fetch origin
 git checkout $BRANCH
 git pull origin $BRANCH
 echo "✅ Код обновлен"
+
+# Возвращаем БД на место (если она была)
+if [ -f "$DB_TEMP" ]; then
+    echo "🛡️  Возврат БД на место..."
+    mkdir -p "$DATA_DIR"
+    mv "$DB_TEMP" "$DB_FILE"
+fi
+# ---------------------------------------------
 
 # Сборка образа
 echo "🔨 Сборка Docker образа..."
