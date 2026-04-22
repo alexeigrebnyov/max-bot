@@ -40,6 +40,12 @@ data/bot/*.sqlite
 data/bot/*.sqlite3
 data/bot/*.db-journal
 
+data/storage.db
+data/*.db
+data/*.sqlite
+data/*.sqlite3
+data/*.db-journal
+
 # Токены, ключи, локальные настройки
 *.pem
 *.key
