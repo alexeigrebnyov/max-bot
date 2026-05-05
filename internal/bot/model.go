@@ -28,15 +28,21 @@ type Model struct {
 	Name       string // ник бота
 }
 
-type keyboardButton struct {
+// KeyboardButton - кнопка клавиатуры
+type KeyboardButton struct {
 	Type    string `json:"type"` // "message" или "request_contact"
 	Text    string `json:"text"`
 	Payload string `json:"payload,omitempty"` // текст, который подставится / уйдёт
 }
 
-type keyboard struct {
-	Buttons [][]keyboardButton `json:"buttons"`
+// Keyboard - клавиатура с кнопками
+type Keyboard struct {
+	Buttons [][]KeyboardButton `json:"buttons"`
 }
+
+// Обратная совместимость (для внутреннего использования)
+type keyboardButton = KeyboardButton
+type keyboard = Keyboard
 
 // структура ответа /me (упрощённо)
 type botInfoResponse struct {

@@ -88,9 +88,9 @@ docker compose up -d --build
 Пример:
 
 ```bash
-curl -X POST http://localhost:8080/send-message ^
-  -H "Content-Type: application/json" ^
-  -d "{\"chat\":\"23718629\",\"thread\":0,\"text\":\"Hello\",\"private\":false}"
+curl -X POST http://localhost:9003/send-message \
+  -H "Content-Type: application/json" \
+  -d '{"chat":"23718629","thread":0,"text":"Hello","private":false}'
 ```
 
 ### `POST /send-by-phone`
@@ -101,6 +101,110 @@ curl -X POST http://localhost:8080/send-message ^
 ### `POST /send-to-group-by-chatid`
 
 - **Назначение**: отправить сообщение в групповой чат по `chat_id`.
+
+### `POST /send-chat-message`
+
+- **Назначение**: отправить сообщение в чат и транслировать его в EventSource.
+- **Тело**: `{"chat_id": 123, "text": "сообщение"}`
+
+### `GET /get-messages-by-chatid`
+
+- **Назначение**: получить сообщения чата по `chat_id` с статусами прочтения.
+- **Параметр**: `chat_id` (query string)
+
+---
+
+## Управление контактами
+
+### `POST /add-contact`
+
+- **Назначение**: добавить или обновить контакт.
+- **Тело**: `{"user_id": 123, "chat_id": 456, "phone": "79001234567", "name": "Имя", "emc": "...", "avatar_url": "...", "emchash": "...", "birthdate": "01.01.1990", "authorized": true}`
+
+### `POST /update-contact`
+
+- **Назначение**: обновить контакт по номеру телефона.
+- **Тело**: аналогично `add-contact`, обновляет поля по `phone`.
+
+### `GET /get-contact`
+
+- **Назначение**: получить контакт по `phone` или `user_id`.
+- **Параметры**: `phone` или `user_id` (query string)
+
+### `GET /contacts`
+
+- **Назначение**: получить всех **авторизованных** контактов.
+
+### `GET /all-contacts`
+
+- **Назначение**: получить **все** контакты (включая неавторизованных).
+
+---
+
+## Статусы сообщений
+
+### `POST /mark-messages-read`
+
+- **Назначение**: пометить сообщения как прочитанные.
+- **Тело**: `{"chat_id": 123, "message_mids": ["mid1", "mid2"]}` (если `message_mids` пуст — помечает все)
+
+### `GET /unread-count`
+
+- **Назначение**: получить количество непрочитанных сообщений в чате.
+- **Параметр**: `chat_id` (query string)
+
+### `GET /unread-messages`
+
+- **Назначение**: получить список всех непрочитанных сообщений.
+
+---
+
+## Записи на приём к врачу
+
+### `POST /create-appointment`
+
+- **Назначение**: создать новую запись на приём.
+- **Тело**: `{"patient_chat_id": 123, "patient_name": "Иван", "appointment_time": "2026-05-10T14:00:00Z", "doctor_name": "Петров", "department": "Терапия"}`
+- **Ответ**: `{"appointment_id": 42}`
+
+### `POST /send-appointment-reminder`
+
+- **Назначение**: отправить пациенту напоминание о записи с кнопками (Приду/Отменить/Перенести).
+- **Тело**: `{"appointment_id": 42, "text": "Напоминание о приёме..."}`
+- **Кнопки**: При нажатии отправляют команды `/appointment_confirm <id>`, `/appointment_cancel <id>`, `/appointment_reschedule <id>`
+
+### `GET /appointments`
+
+- **Назначение**: получить список записей.
+- **Параметры**: `chat_id` (опционально) — фильтр по пациенту
+- **Ответ**: список записей со статусами (pending, confirmed, cancelled, rescheduled)
+
+**Обработка ответов пациента:**
+- При нажатии кнопки бот автоматически:
+  1. Обновляет статус записи в БД
+  2. Отправляет подтверждение пациенту
+  3. Уведомляет бэкенд (если настроен `APPOINTMENT_BACKEND_URL`)
+
+---
+
+## Web UI и EventSource
+
+### `GET /admin`
+
+- **Назначение**: веб-интерфейс управления ботом (HTML страница).
+
+### `GET /messages`
+
+- **Назначение**: страница просмотра сообщений (HTML страница).
+
+### `GET /events`
+
+- **Назначение**: EventSource (SSE) для получения событий в реальном времени.
+- **События**: `message` — новое сообщение, `contact_update` — обновление контакта.
+
+---
+
+## Служебные эндпоинты
 
 ### `POST /refresh-group-chats`
 
@@ -114,7 +218,7 @@ curl -X POST http://localhost:8080/send-message ^
 
 ### `POST /webhook`
 
-- **Назначение**: приём событий от MAX.
+- **Назначение**: приём событий от MAX (Webhook mode).
 - **Защита**: если `WEBHOOK_SECRET` задан — требуется `X-Webhook-Secret`.
 
 ### `GET /metrics`

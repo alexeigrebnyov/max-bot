@@ -3,6 +3,7 @@
 package bot
 
 import (
+	"bytes"
 	"context"
 	"crypto/subtle"
 	"encoding/json"
@@ -14,6 +15,7 @@ import (
 	"max-bot-service/internal/storage/tables"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -881,6 +883,20 @@ func (srv *Service) handleMessageCreated(ctx context.Context, raw json.RawMessag
 	// Нет активной сессии - обрабатываем команду /start
 	if trimmedText == "/start" || trimmedText == "start" {
 		srv.handleStartCommand(ctx, userID, chatKey, payload, name, avatar)
+		return
+	}
+
+	// Обработка команд записи на приём к врачу
+	if strings.HasPrefix(trimmedText, "/appointment_confirm") ||
+		strings.HasPrefix(trimmedText, "/appointment_cancel") ||
+		strings.HasPrefix(trimmedText, "/appointment_reschedule") {
+		srv.handleAppointmentCommand(ctx, userID, chatKey, trimmedText)
+		return
+	}
+
+	// Обработка шагов переноса (дата → врач → время)
+	if strings.HasPrefix(trimmedText, "/reschedule_") {
+		srv.handleRescheduleStep(ctx, userID, chatKey, trimmedText)
 		return
 	}
 
@@ -1916,5 +1932,388 @@ func (srv *Service) sendAuthError(ctx context.Context, chatKey string) {
 	}
 	if err := srv.Bot.SendMessageWithKeyboard(ctx, chatKey, text, kb, false); err != nil {
 		log.Printf("sendAuthError: send error: %v", err)
+	}
+}
+
+// handleAppointmentCommand обрабатывает команды подтверждения/отмены/переноса записи
+func (srv *Service) handleAppointmentCommand(ctx context.Context, userID int64, chatKey string, text string) {
+	// Парсим команду и ID записи
+	parts := strings.Fields(text)
+	if len(parts) < 2 {
+		log.Printf("handleAppointmentCommand: invalid command format: %s", text)
+		srv.Bot.SendMessage(ctx, chatKey, 0, "Ошибка: не указан ID записи", false)
+		return
+	}
+
+	command := parts[0]
+	appointmentID, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil {
+		log.Printf("handleAppointmentCommand: invalid appointment ID: %s", parts[1])
+		srv.Bot.SendMessage(ctx, chatKey, 0, "Ошибка: неверный ID записи", false)
+		return
+	}
+
+	// Проверяем существование записи
+	apt, err := srv.storage.Appointments.FindByID(appointmentID)
+	if err != nil {
+		log.Printf("handleAppointmentCommand: FindByID error: %v", err)
+		srv.Bot.SendMessage(ctx, chatKey, 0, "Ошибка при поиске записи", false)
+		return
+	}
+	if apt == nil {
+		srv.Bot.SendMessage(ctx, chatKey, 0, "Запись не найдена", false)
+		return
+	}
+
+	// Обрабатываем команду
+	var status string
+	var responseText string
+
+	switch command {
+	case "/appointment_confirm":
+		status = "confirmed"
+		responseText = fmt.Sprintf("✅ Запись подтверждена!\n\n📅 Дата: %s\n👨‍⚕️ Врач: %s\n🏥 Отделение: %s",
+			apt.AppointmentTime.Format("02.01.2006 15:04"),
+			apt.DoctorName,
+			apt.Department)
+	case "/appointment_cancel":
+		status = "cancelled"
+		responseText = "❌ Запись отменена. Для новой записи обратитесь в регистратуру."
+	case "/appointment_reschedule":
+		// Запускаем пошаговый выбор для переноса
+		srv.startRescheduleFlow(ctx, userID, chatKey, appointmentID)
+		return
+	default:
+		log.Printf("handleAppointmentCommand: unknown command: %s", command)
+		return
+	}
+
+	// Обновляем статус в БД
+	if err := srv.storage.Appointments.UpdateStatus(appointmentID, status); err != nil {
+		log.Printf("handleAppointmentCommand: UpdateStatus error: %v", err)
+		srv.Bot.SendMessage(ctx, chatKey, 0, "Ошибка при обновлении статуса", false)
+		return
+	}
+
+	// Отправляем подтверждение пациенту
+	if err := srv.Bot.SendMessage(ctx, chatKey, 0, responseText, false); err != nil {
+		log.Printf("handleAppointmentCommand: SendMessage error: %v", err)
+	}
+
+	// Отправляем уведомление на бэкенд (если настроен вебхук)
+	srv.notifyBackendAppointmentStatus(appointmentID, status, userID)
+
+	log.Printf("handleAppointmentCommand: appointment %d status updated to %s by user %d", appointmentID, status, userID)
+}
+
+// notifyBackendAppointmentStatus отправляет уведомление на бэкенд о изменении статуса записи
+func (srv *Service) notifyBackendAppointmentStatus(appointmentID int64, status string, userID int64) {
+	// Формируем паулод для отправки на бэкенд
+	payload := map[string]interface{}{
+		"appointment_id": appointmentID,
+		"status":         status,
+		"user_id":        userID,
+		"timestamp":      time.Now().Unix(),
+	}
+
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		log.Printf("notifyBackendAppointmentStatus: marshal error: %v", err)
+		return
+	}
+
+	// Здесь можно добавить отправку на внешний вебхук бэкенда
+	// Пример: POST на настроенный URL бэкенда
+	backendURL := os.Getenv("APPOINTMENT_BACKEND_URL")
+	if backendURL == "" {
+		log.Printf("notifyBackendAppointmentStatus: APPOINTMENT_BACKEND_URL not set, skipping backend notification")
+		return
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Post(backendURL, "application/json", bytes.NewReader(payloadBytes))
+	if err != nil {
+		log.Printf("notifyBackendAppointmentStatus: backend notification error: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		log.Printf("notifyBackendAppointmentStatus: backend notified successfully for appointment %d", appointmentID)
+	} else {
+		log.Printf("notifyBackendAppointmentStatus: backend returned status %d for appointment %d", resp.StatusCode, appointmentID)
+	}
+}
+
+// startRescheduleFlow запускает пошаговый процесс выбора новой даты/врача/времени
+// Шаг 1: Выбор даты
+func (srv *Service) startRescheduleFlow(ctx context.Context, userID int64, chatKey string, appointmentID int64) {
+	// Создаем сессию переноса
+	sessionID, err := srv.storage.RescheduleSessions.Create(userID, appointmentID)
+	if err != nil {
+		log.Printf("startRescheduleFlow: Create session error: %v", err)
+		srv.Bot.SendMessage(ctx, chatKey, 0, "Ошибка при создании сессии переноса", false)
+		return
+	}
+	log.Printf("startRescheduleFlow: created session %d for appointment %d", sessionID, appointmentID)
+
+	// Генерируем даты на ближайшие 14 дней
+	dates := srv.generateAvailableDates(14)
+
+	// Создаем клавиатуру с датами (2 кнопки в ряд)
+	var buttons [][]KeyboardButton
+	for i := 0; i < len(dates); i += 2 {
+		row := []KeyboardButton{
+			{Type: "message", Text: dates[i], Payload: "/reschedule_date " + dates[i]},
+		}
+		if i+1 < len(dates) {
+			row = append(row, KeyboardButton{Type: "message", Text: dates[i+1], Payload: "/reschedule_date " + dates[i+1]})
+		}
+		buttons = append(buttons, row)
+	}
+	// Добавляем кнопку отмены
+	buttons = append(buttons, []KeyboardButton{
+		{Type: "message", Text: "❌ Отменить перенос", Payload: "/reschedule_cancel"},
+	})
+
+	kb := Keyboard{Buttons: buttons}
+	text := "🗓 Давайте выберем новую дату приёма:"
+
+	if err := srv.Bot.SendMessageWithKeyboard(ctx, chatKey, text, kb, false); err != nil {
+		log.Printf("startRescheduleFlow: SendMessageWithKeyboard error: %v", err)
+	}
+}
+
+// handleRescheduleStep обрабатывает шаги переноса
+func (srv *Service) handleRescheduleStep(ctx context.Context, userID int64, chatKey string, text string) {
+	// Ищем активную сессию переноса
+	session, err := srv.storage.RescheduleSessions.FindByUserID(userID)
+	if err != nil {
+		log.Printf("handleRescheduleStep: FindByUserID error: %v", err)
+		srv.Bot.SendMessage(ctx, chatKey, 0, "Ошибка при поиске сессии", false)
+		return
+	}
+	if session == nil {
+		srv.Bot.SendMessage(ctx, chatKey, 0, "Сессия переноса истекла. Начните снова кнопкой Перенести.", false)
+		return
+	}
+
+	// Обрабатываем в зависимости от текущего шага и команды
+	switch {
+	case strings.HasPrefix(text, "/reschedule_date "):
+		date := strings.TrimPrefix(text, "/reschedule_date ")
+		srv.handleRescheduleDate(ctx, chatKey, session, date)
+	case strings.HasPrefix(text, "/reschedule_doctor "):
+		doctor := strings.TrimPrefix(text, "/reschedule_doctor ")
+		srv.handleRescheduleDoctor(ctx, chatKey, session, doctor)
+	case strings.HasPrefix(text, "/reschedule_time "):
+		timeStr := strings.TrimPrefix(text, "/reschedule_time ")
+		srv.handleRescheduleTime(ctx, userID, chatKey, session, timeStr)
+	case text == "/reschedule_confirm":
+		srv.finalizeReschedule(ctx, userID, chatKey, session)
+	case text == "/reschedule_cancel":
+		srv.storage.RescheduleSessions.Delete(session.ID)
+		srv.Bot.SendMessage(ctx, chatKey, 0, "❌ Перенос отменён.", false)
+	case text == "/reschedule_restart":
+		srv.storage.RescheduleSessions.Delete(session.ID)
+		srv.startRescheduleFlow(ctx, userID, chatKey, session.AppointmentID)
+	case text == "/reschedule_back_to_date":
+		// Возврат к выбору даты - удаляем сессию и стартуем заново
+		srv.storage.RescheduleSessions.Delete(session.ID)
+		srv.startRescheduleFlow(ctx, userID, chatKey, session.AppointmentID)
+	case text == "/reschedule_back_to_doctor":
+		// Возврат к выбору врача - показываем врачей для уже выбранной даты
+		srv.handleRescheduleDate(ctx, chatKey, session, session.SelectedDate)
+	default:
+		srv.Bot.SendMessage(ctx, chatKey, 0, "Неизвестная команда. Используйте кнопки для выбора.", false)
+	}
+}
+
+// handleRescheduleDate - Шаг 2: выбор врача после выбора даты
+func (srv *Service) handleRescheduleDate(ctx context.Context, chatKey string, session *tables.RescheduleSession, date string) {
+	// Получаем список доступных врачей (заглушка - в реальности из БД или API)
+	doctors := srv.getAvailableDoctors(date)
+
+	// Сохраняем выбор и переходим к шагу выбора врача
+	if err := srv.storage.RescheduleSessions.UpdateStepDate(session.ID, date, doctors); err != nil {
+		log.Printf("handleRescheduleDate: UpdateStepDate error: %v", err)
+		srv.Bot.SendMessage(ctx, chatKey, 0, "Ошибка сохранения даты", false)
+		return
+	}
+
+	// Создаем клавиатуру с врачами
+	var buttons [][]KeyboardButton
+	for _, doctor := range doctors {
+		buttons = append(buttons, []KeyboardButton{
+			{Type: "message", Text: "👨‍⚕️ " + doctor, Payload: "/reschedule_doctor " + doctor},
+		})
+	}
+	buttons = append(buttons, []KeyboardButton{
+		{Type: "message", Text: "⬅️ Назад", Payload: "/reschedule_back_to_date"},
+		{Type: "message", Text: "❌ Отмена", Payload: "/reschedule_cancel"},
+	})
+
+	kb := Keyboard{Buttons: buttons}
+	text := "📅 Вы выбрали: " + date + "\nТеперь выберите врача:"
+
+	srv.Bot.SendMessageWithKeyboard(ctx, chatKey, text, kb, false)
+}
+
+// handleRescheduleDoctor - Шаг 3: выбор времени после выбора врача
+func (srv *Service) handleRescheduleDoctor(ctx context.Context, chatKey string, session *tables.RescheduleSession, doctor string) {
+	// Получаем доступное время для врача на выбранную дату
+	times := srv.getAvailableTimes(session.SelectedDate, doctor)
+
+	// Сохраняем выбор и переходим к шагу выбора времени
+	if err := srv.storage.RescheduleSessions.UpdateStepDoctor(session.ID, doctor, times); err != nil {
+		log.Printf("handleRescheduleDoctor: UpdateStepDoctor error: %v", err)
+		srv.Bot.SendMessage(ctx, chatKey, 0, "Ошибка сохранения врача", false)
+		return
+	}
+
+	// Создаем клавиатуру с временем (3 в ряд)
+	var buttons [][]KeyboardButton
+	var currentRow []KeyboardButton
+	for i, t := range times {
+		currentRow = append(currentRow, KeyboardButton{Type: "message", Text: t, Payload: "/reschedule_time " + t})
+		if (i+1)%3 == 0 {
+			buttons = append(buttons, currentRow)
+			currentRow = []KeyboardButton{}
+		}
+	}
+	if len(currentRow) > 0 {
+		buttons = append(buttons, currentRow)
+	}
+	buttons = append(buttons, []KeyboardButton{
+		{Type: "message", Text: "⬅️ Назад", Payload: "/reschedule_back_to_doctor"},
+		{Type: "message", Text: "❌ Отмена", Payload: "/reschedule_cancel"},
+	})
+
+	kb := Keyboard{Buttons: buttons}
+	text := "👨‍⚕️ Вы выбрали: " + doctor + "\nТеперь выберите время:"
+
+	srv.Bot.SendMessageWithKeyboard(ctx, chatKey, text, kb, false)
+}
+
+// handleRescheduleTime - Шаг 4: подтверждение после выбора времени
+func (srv *Service) handleRescheduleTime(ctx context.Context, userID int64, chatKey string, session *tables.RescheduleSession, timeStr string) {
+	// Сохраняем выбор времени
+	if err := srv.storage.RescheduleSessions.UpdateStepTime(session.ID, timeStr); err != nil {
+		log.Printf("handleRescheduleTime: UpdateStepTime error: %v", err)
+		srv.Bot.SendMessage(ctx, chatKey, 0, "Ошибка сохранения времени", false)
+		return
+	}
+
+	// Формируем итоговое сообщение
+	confirmationText := fmt.Sprintf(
+		"🗓 Подтвердите перенос записи:\n\n"+
+			"📅 Дата: %s\n"+
+			"👨‍⚕️ Врач: %s\n"+
+			"⏰ Время: %s\n\n"+
+			"Всё верно?",
+		session.SelectedDate, session.SelectedDoctor, timeStr,
+	)
+
+	// Клавиатура подтверждения
+	kb := Keyboard{
+		Buttons: [][]KeyboardButton{
+			{
+				{Type: "message", Text: "✅ Подтвердить", Payload: "/reschedule_confirm"},
+				{Type: "message", Text: "❌ Отмена", Payload: "/reschedule_cancel"},
+			},
+			{
+				{Type: "message", Text: "⬅️ Начать сначала", Payload: "/reschedule_restart"},
+			},
+		},
+	}
+
+	srv.Bot.SendMessageWithKeyboard(ctx, chatKey, confirmationText, kb, false)
+}
+
+// finalizeReschedule - Финальный шаг: сохранение переноса
+func (srv *Service) finalizeReschedule(ctx context.Context, userID int64, chatKey string, session *tables.RescheduleSession) {
+	// Обновляем запись в БН
+	apt, err := srv.storage.Appointments.FindByID(session.AppointmentID)
+	if err != nil || apt == nil {
+		log.Printf("finalizeReschedule: FindByID error: %v", err)
+		srv.Bot.SendMessage(ctx, chatKey, 0, "Ошибка: запись не найдена", false)
+		return
+	}
+
+	// Парсим новое время
+	newTime, err := time.Parse("15:04", session.SelectedTime)
+	if err != nil {
+		log.Printf("finalizeReschedule: invalid time format %q: %v", session.SelectedTime, err)
+		srv.Bot.SendMessage(ctx, chatKey, 0, "Ошибка: неверный формат времени", false)
+		return
+	}
+	newDate, err := time.Parse("02.01.2006", session.SelectedDate)
+	if err != nil {
+		log.Printf("finalizeReschedule: invalid date format %q: %v", session.SelectedDate, err)
+		srv.Bot.SendMessage(ctx, chatKey, 0, "Ошибка: неверный формат даты", false)
+		return
+	}
+	newDateTime := time.Date(newDate.Year(), newDate.Month(), newDate.Day(),
+		newTime.Hour(), newTime.Minute(), 0, 0, time.FixedZone("Europe/Moscow", 3*60*60))
+
+	// Обновляем запись (врача, время, статус)
+	apt.AppointmentTime = newDateTime
+	apt.DoctorName = session.SelectedDoctor
+	apt.Status = "rescheduled"
+
+	// Здесь нужно добавить метод обновления в Appointments
+	if err := srv.storage.Appointments.UpdateReschedule(session.AppointmentID, newDateTime, session.SelectedDoctor); err != nil {
+		log.Printf("finalizeReschedule: UpdateReschedule error: %v", err)
+		srv.Bot.SendMessage(ctx, chatKey, 0, "Ошибка при сохранении переноса", false)
+		return
+	}
+
+	// Удаляем сессию
+	srv.storage.RescheduleSessions.Delete(session.ID)
+
+	// Отправляем подтверждение
+	confirmation := fmt.Sprintf(
+		"✅ Запись успешно перенесена!\n\n"+
+			"📅 Новая дата: %s\n"+
+			"👨‍⚕️ Врач: %s\n"+
+			"⏰ Новое время: %s",
+		session.SelectedDate, session.SelectedDoctor, session.SelectedTime,
+	)
+	srv.Bot.SendMessage(ctx, chatKey, 0, confirmation, false)
+
+	// Уведомляем бэкенд
+	srv.notifyBackendAppointmentStatus(session.AppointmentID, "rescheduled", userID)
+}
+
+// generateAvailableDates возвращает даты на ближайшие N дней в формате "DD.MM.YYYY"
+func (srv *Service) generateAvailableDates(days int) []string {
+	var dates []string
+	now := time.Now()
+	for i := 0; i < days; i++ {
+		date := now.Add(time.Duration(i) * 24 * time.Hour)
+		// Пропускаем воскресенья
+		if date.Weekday() == time.Sunday {
+			continue
+		}
+		dates = append(dates, date.Format("02.01.2006"))
+	}
+	return dates
+}
+
+func (srv *Service) getAvailableDoctors(date string) []string {
+	// Заглушка - в реальности запрос к БД или API больницы
+	return []string{
+		"Петров А.В.",
+		"Сидоров М.Б.",
+		"Кузнецова Е.В.",
+		"Новикова О.П.",
+	}
+}
+
+func (srv *Service) getAvailableTimes(date, doctor string) []string {
+	// Заглушка - в реальности запрос расписания
+	return []string{
+		"09:00", "09:30", "10:00", "10:30", "11:00", "11:30",
+		"14:00", "14:30", "15:00", "15:30", "16:00", "16:30",
 	}
 }

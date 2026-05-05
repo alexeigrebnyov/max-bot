@@ -1,6 +1,6 @@
 # Навигационная карта проекта MAX Bot
 
-> Последнее обновление: 2026-04-08
+> Последнее обновление: 2026-05-04
 
 ## Оглавление
 - [Архитектура проекта](#архитектура-проекта)
@@ -165,11 +165,12 @@ max-bot/
   - `All()` - **только авторизованные** контакты
   - `Delete()` - удаление
 
-- **API handlers:** `internal/api/handlers/add-contact.go`
-  - POST `/add-contact` - добавить контакт
-  - POST `/update-contact` - обновить контакт
-  - GET `/get-contact?phone=X` - получить контакт
-  - GET `/contacts` - список всех контактов
+- **API handlers:** `internal/api/handlers/add-contact.go`, `internal/api/handlers/get-contact.go`
+  - POST `/add-contact` - добавить/обновить контакт
+  - POST `/update-contact` - обновить контакт по телефону
+  - GET `/get-contact?phone=X&user_id=Y` - получить контакт
+  - GET `/contacts` - список авторизованных контактов
+  - GET `/all-contacts` - список всех контактов
 
 #### Поля контакта:
 ```go
@@ -310,6 +311,33 @@ CREATE TABLE message_status (
 
 ---
 
+### Таблица: `appointments`
+**Файл:** `internal/storage/tables/appointments.go` (новый!)
+
+```sql
+CREATE TABLE appointments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    patient_chat_id INTEGER NOT NULL,
+    patient_name TEXT,
+    appointment_time INTEGER NOT NULL,
+    doctor_name TEXT,
+    department TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    reminder_sent INTEGER DEFAULT 0,
+    created_at INTEGER DEFAULT (strftime('%s','now')),
+    updated_at INTEGER
+);
+```
+
+**Статусы:** `pending` → `confirmed` | `cancelled` | `rescheduled`
+
+**Индексы:**
+- `appointments_chat_id` - по patient_chat_id
+- `appointments_status` - по status
+- `appointments_time` - по appointment_time
+
+---
+
 ### Таблица: `auth_sessions`
 **Файл:** `internal/storage/tables/auth_sessions.go`
 
@@ -352,8 +380,8 @@ CREATE TABLE group_chats (
 POST   /send-message              - отправить сообщение по chat_id
 POST   /send-by-phone             - отправить сообщение по телефону
 POST   /send-to-group-by-chatid   - отправить в группу
-POST   /send-chat-message         - отправить с EventSource
-GET    /get-messages-by-chatid    - получить сообщения чата
+POST   /send-chat-message         - отправить и транслировать в EventSource
+GET    /get-messages-by-chatid    - получить сообщения чата с статусами прочтения
 ```
 
 ### Статусы сообщений
@@ -363,12 +391,25 @@ GET    /unread-count              - счетчик непрочитанных
 GET    /unread-messages           - список непрочитанных
 ```
 
+### Записи на приём к врачу
+```
+POST   /create-appointment        - создать запись
+POST   /send-appointment-reminder - отправить напоминание с кнопками
+GET    /appointments              - список записей
+```
+
+**Обработка кнопок:**
+- Кнопки отправляют команды: `/appointment_confirm <id>`, `/appointment_cancel <id>`, `/appointment_reschedule <id>`
+- Обработка в `internal/bot/service.go` → `handleAppointmentCommand()`
+- Уведомление бэкенда через `notifyBackendAppointmentStatus()`
+
 ### Контакты
 ```
-POST   /add-contact               - добавить контакт
-POST   /update-contact            - обновить контакт
-GET    /get-contact               - получить контакт
-GET    /contacts                  - список контактов
+POST   /add-contact               - добавить/обновить контакт
+POST   /update-contact            - обновить контакт по телефону
+GET    /get-contact               - получить контакт (по phone или user_id)
+GET    /contacts                  - список авторизованных контактов
+GET    /all-contacts              - список всех контактов
 ```
 
 ### Групповые чаты
@@ -459,6 +500,22 @@ SELECT * FROM message_status;
 ---
 
 ## Changelog
+
+### 2026-05-04
+- **Новый функционал: Записи на приём к врачу**
+  - Таблица `appointments` для хранения записей
+  - API: `POST /create-appointment` - создание записи
+  - API: `POST /send-appointment-reminder` - отправка с кнопками (Приду/Отменить/Перенести)
+  - API: `GET /appointments` - список записей
+  - Обработка команд: `/appointment_confirm|cancel|reschedule <id>`
+  - Уведомление бэкенда через переменную `APPOINTMENT_BACKEND_URL`
+  - Экспорт типов `Keyboard`, `KeyboardButton` из `internal/bot/model.go`
+- Обновлена документация README.md (API эндпоинты)
+- Добавлен `/all-contacts` - список всех контактов
+- Уточнен порт по умолчанию: 9003
+- Обновлена документация README.md (API эндпоинты)
+- Добавлен `/all-contacts` - список всех контактов
+- Уточнен порт по умолчанию: 9003
 
 ### 2026-04-08
 - Добавлено поле `authorized` в таблицу `contacts`

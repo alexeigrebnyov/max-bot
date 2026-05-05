@@ -129,6 +129,10 @@ func (srv *Service) buildMux() http.Handler {
     mux.Handle("/unread-messages", &handlers.GetUnreadMessagesHandler{MessageStatus: srv.Storage.MessageStatus})
     // Страница сообщений:
     mux.Handle("/messages", &handlers.MessagesUIHandler{})
+    // Записи на приём к врачу:
+    mux.Handle("/create-appointment", &handlers.CreateAppointmentHandler{Appointments: srv.Storage.Appointments})
+    mux.Handle("/send-appointment-reminder", &handlers.SendAppointmentReminderHandler{Bot: srv.Bot.BotModel, Appointments: srv.Storage.Appointments})
+    mux.Handle("/appointments", &handlers.ListAppointmentsHandler{Appointments: srv.Storage.Appointments})
 
 	var h http.Handler = mux
 	if srv.Metrics != nil {

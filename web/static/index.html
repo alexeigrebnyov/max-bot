@@ -317,7 +317,13 @@
     function formatTime(timestamp) {
         if (!timestamp) return '';
         const date = new Date(timestamp);
-        return date.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+        return date.toLocaleString('ru-RU', {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+        });
     }
 
     function formatDate(timestamp) {
@@ -376,6 +382,8 @@
             } else {
                 badge.style.display = 'none';
             }
+            // После изменения статуса непрочитанности сортируем контакты
+            sortContacts();
         }
     }
 
@@ -388,6 +396,8 @@
                 body: JSON.stringify({ chat_id: chatId, message_mids: [] })
             });
             updateUnreadBadge(chatId, 0);
+            // После прочтения сортируем контакты
+            sortContacts();
         } catch (err) {
             console.error('markChatAsRead error:', err);
         }
@@ -444,6 +454,9 @@
             // Загружаем количество непрочитанных сообщений
             loadUnreadCount(chatId);
         });
+
+        // После загрузки всех контактов и их данных сортируем список
+        sortContacts();
 
         // Если был открыт чат, но его нет в списке — очищаем
         if (currentChatId && !contactsMap.has(currentChatId)) {
@@ -590,6 +603,9 @@
             const date = new Date(timestamp);
             timeSpan.textContent = formatTime(timestamp);
         }
+
+        // Сортируем контакты после обновления превью
+        sortContacts();
     }
 
     // SSE обработка новых сообщений
@@ -685,6 +701,8 @@
             const isIncoming = msg.sender && !msg.sender.is_bot;
             if (isIncoming) {
                 loadUnreadCount(msgChatId);
+                // После обновления счетчика сортируем контакты
+                sortContacts();
             }
         }
     }
@@ -716,6 +734,45 @@
         }
     }
 
+    // Сортировка контактов: непрочитанные сверху (от старых к новым), затем прочитанные
+    function sortContacts() {
+        const container = document.getElementById('contacts-list');
+        const items = Array.from(container.querySelectorAll('.contact-item'));
+
+        if (items.length === 0) return;
+
+        // Получаем данные для сортировки для каждого элемента
+        const itemsWithData = items.map(item => {
+            const chatId = Number(item.getAttribute('data-chat-id'));
+            const unreadBadge = document.getElementById(`unread-${chatId}`);
+            const unreadCount = unreadBadge && unreadBadge.style.display !== 'none'
+                ? parseInt(unreadBadge.textContent) || 0
+                : 0;
+            const timestamp = lastMessageTimestamps.get(chatId) || 0;
+
+            return { item, chatId, unreadCount, timestamp };
+        });
+
+        // Сортируем: сначала непрочитанные (от старых к новым), потом прочитанные (от новых к старым)
+        itemsWithData.sort((a, b) => {
+            // Если оба непрочитанные или оба прочитанные - сортируем по времени
+            if ((a.unreadCount > 0 && b.unreadCount > 0) || (a.unreadCount === 0 && b.unreadCount === 0)) {
+                // Для непрочитанных: от старых к новым (ascending)
+                // Для прочитанных: от новых к старым (descending)
+                return a.unreadCount > 0
+                    ? a.timestamp - b.timestamp
+                    : b.timestamp - a.timestamp;
+            }
+            // Непрочитанные всегда выше прочитанных
+            return b.unreadCount - a.unreadCount;
+        });
+
+        // Перемещаем элементы в новом порядке
+        itemsWithData.forEach(({ item }) => {
+            container.appendChild(item);
+        });
+    }
+
     // Фильтрация контактов по поисковому запросу
     function filterContacts(searchQuery) {
         const query = searchQuery.toLowerCase().trim();
@@ -735,9 +792,9 @@
             const emc = (contact.EMC || '').toLowerCase();
 
             const matches = query === '' ||
-                           name.includes(query) ||
-                           phone.includes(query) ||
-                           emc.includes(query);
+                name.includes(query) ||
+                phone.includes(query) ||
+                emc.includes(query);
 
             item.style.display = matches ? 'flex' : 'none';
         });
