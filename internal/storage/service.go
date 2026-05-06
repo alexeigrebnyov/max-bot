@@ -72,7 +72,6 @@ func (srv *Service) Start(ctx context.Context) {
 	srv.AuthSessions = tables.NewAuthSessions(db)
 	srv.MessageStatus = tables.NewMessageStatus(db)
 
-	var err error
 	srv.Appointments, err = tables.NewAppointments(db)
 	if err != nil {
 		log.Fatal(err)

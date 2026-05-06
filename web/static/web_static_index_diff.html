@@ -1,0 +1,905 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MAX Bot — чат с контактами</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            background: #e5e5e5;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        .app {
+            display: flex;
+            height: 100vh;
+            background: white;
+            box-shadow: 0 0 20px rgba(0,0,0,0.1);
+        }
+
+        /* Список контактов (левая панель) */
+        .contacts-panel {
+            width: 320px;
+            background: #fff;
+            border-right: 1px solid #e0e0e0;
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
+        }
+
+        .contacts-header {
+            padding: 20px;
+            background: #f0f2f5;
+            border-bottom: 1px solid #e0e0e0;
+            font-weight: 600;
+            font-size: 18px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .nav-link {
+            color: #4a76a8;
+            text-decoration: none;
+            font-size: 14px;
+            padding: 6px 12px;
+            border-radius: 4px;
+            transition: background 0.2s;
+        }
+
+        .nav-link:hover {
+            background: #e9f0fe;
+        }
+
+        .search-box {
+            padding: 10px 16px;
+            background: #f0f2f5;
+            border-bottom: 1px solid #e0e0e0;
+        }
+
+        .search-input {
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 20px;
+            font-size: 14px;
+            outline: none;
+            background: white;
+        }
+
+        .search-input:focus {
+            border-color: #4a76a8;
+        }
+
+        .contact-item {
+            display: flex;
+            align-items: center;
+            padding: 12px 16px;
+            border-bottom: 1px solid #f0f0f0;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .contact-item:hover {
+            background: #f5f5f5;
+        }
+
+        .contact-item.active {
+            background: #e9f0fe;
+        }
+
+        .avatar {
+            width: 48px;
+            height: 48px;
+            border-radius: 50%;
+            background: #4a76a8;
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+            font-size: 18px;
+            margin-right: 12px;
+            flex-shrink: 0;
+        }
+
+        .contact-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .contact-name {
+            font-weight: 500;
+            margin-bottom: 4px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .contact-preview {
+            font-size: 13px;
+            color: #6c6c6c;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .contact-time {
+            font-size: 11px;
+            color: #999;
+            margin-left: 8px;
+            flex-shrink: 0;
+        }
+
+        .unread-badge {
+            background: #25d366;
+            color: white;
+            border-radius: 10px;
+            padding: 2px 6px;
+            font-size: 11px;
+            font-weight: 600;
+            margin-left: 8px;
+            min-width: 20px;
+            text-align: center;
+        }
+
+        /* Чат (правая панель) */
+        .chat-panel {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background: #efeae2;
+        }
+
+        .chat-header {
+            padding: 12px 20px;
+            background: #f0f2f5;
+            border-bottom: 1px solid #e0e0e0;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+        }
+
+        .chat-header .avatar {
+            width: 40px;
+            height: 40px;
+            font-size: 16px;
+            margin-right: 12px;
+        }
+
+        .chat-header .info {
+            flex: 1;
+        }
+
+        .chat-header .name {
+            font-weight: 600;
+        }
+
+        .chat-header .phone {
+            font-size: 12px;
+            color: #6c6c6c;
+        }
+
+        .messages-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .message {
+            max-width: 70%;
+            padding: 8px 12px;
+            border-radius: 18px;
+            font-size: 14px;
+            line-height: 1.4;
+            position: relative;
+            word-wrap: break-word;
+            transition: background 0.3s ease;
+        }
+
+        .message.highlighted {
+            animation: highlight-pulse 2s ease-in-out;
+        }
+
+        @keyframes highlight-pulse {
+            0%, 100% { background: inherit; }
+            50% { background: #fff3cd; box-shadow: 0 0 10px rgba(255, 193, 7, 0.5); }
+        }
+
+        .message.incoming {
+            background: white;
+            align-self: flex-start;
+            border-bottom-left-radius: 4px;
+        }
+
+        .message.outgoing {
+            background: #d9f0ec;
+            align-self: flex-end;
+            border-bottom-right-radius: 4px;
+        }
+
+        .message-time {
+            font-size: 10px;
+            color: #999;
+            margin-top: 4px;
+            text-align: right;
+        }
+
+        .input-area {
+            padding: 16px 20px;
+            background: #f0f2f5;
+            display: flex;
+            gap: 12px;
+            align-items: center;
+        }
+
+        .input-area input {
+            flex: 1;
+            padding: 10px 16px;
+            border: none;
+            border-radius: 24px;
+            font-size: 14px;
+            outline: none;
+            background: white;
+        }
+
+        .input-area button {
+            background: #4a76a8;
+            color: white;
+            border: none;
+            border-radius: 24px;
+            padding: 10px 20px;
+            cursor: pointer;
+            font-weight: 500;
+        }
+
+        .input-area button:hover {
+            background: #3a5e8c;
+        }
+
+        .empty-state {
+            text-align: center;
+            color: #888;
+            margin-top: 50px;
+        }
+    </style>
+</head>
+<body>
+<div class="app">
+    <div class="contacts-panel">
+        <div class="contacts-header">
+            <span>Контакты</span>
+            <a href="/messages" class="nav-link">Сообщения →</a>
+        </div>
+        <div class="search-box">
+            <input type="text" id="contact-search" class="search-input" placeholder="Поиск по имени, телефону, EMC..." style="margin-bottom: 8px;">
+            <input type="text" id="message-search" class="search-input" placeholder="Поиск по содержимому сообщений...">
+        </div>
+        <div id="contacts-list"></div>
+    </div>
+    <div class="chat-panel">
+        <div id="chat-header" class="chat-header" style="display: none;">
+            <div class="avatar" id="chat-avatar"></div>
+            <div class="info">
+                <div class="name" id="chat-name"></div>
+                <div class="phone" id="chat-phone"></div>
+            </div>
+        </div>
+        <div id="messages-container" class="messages-container">
+            <div class="empty-state">Выберите контакт, чтобы начать чат</div>
+        </div>
+        <div id="input-area" class="input-area" style="display: none;">
+            <input type="text" id="message-input" placeholder="Введите сообщение..." autocomplete="off">
+            <button id="send-button">Отправить</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    let currentChatId = null;
+    let currentUserId = null;
+    let eventSource = null;
+    let contactsMap = new Map(); // key: chat_id, value: contact object
+    let lastMessageTimestamps = new Map(); // key: chat_id, value: timestamp последнего сообщения
+
+    // Форматирование времени
+    function formatTime(timestamp) {
+        if (!timestamp) return '';
+        const date = new Date(timestamp);
+        return date.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+    }
+
+    function formatDate(timestamp) {
+        const date = new Date(timestamp);
+        return date.toLocaleDateString();
+    }
+
+    // Загрузка всех контактов
+    async function loadContacts() {
+        const resp = await fetch('/contacts');
+        const data = await resp.json();
+        if (data.status === 'ok') {
+            renderContacts(data.contacts);
+        } else {
+            console.error('Ошибка загрузки контактов:', data);
+        }
+    }
+
+    // Загрузка последнего сообщения для чата
+    async function loadLastMessage(chatId) {
+        try {
+            const resp = await fetch(`/get-messages-by-chatid?chat_id=${chatId}`);
+            if (!resp.ok) return;
+            const messages = await resp.json();
+            if (messages && messages.length > 0) {
+                // Находим сообщение с максимальным timestamp
+                const lastMsg = messages.reduce((latest, msg) => {
+                    return (msg.timestamp > latest.timestamp) ? msg : latest;
+                }, messages[0]);
+                updateContactPreview(chatId, lastMsg.body.text || '', lastMsg.timestamp);
+            }
+        } catch (err) {
+            console.error('loadLastMessage error:', err);
+        }
+    }
+
+    // Загрузка количества непрочитанных сообщений
+    async function loadUnreadCount(chatId) {
+        try {
+            const resp = await fetch(`/unread-count?chat_id=${chatId}`);
+            if (!resp.ok) return;
+            const data = await resp.json();
+            updateUnreadBadge(chatId, data.unread_count || 0);
+        } catch (err) {
+            console.error('loadUnreadCount error:', err);
+        }
+    }
+
+    // Обновление бейджа с количеством непрочитанных
+    function updateUnreadBadge(chatId, count) {
+        const badge = document.getElementById(`unread-${chatId}`);
+        if (badge) {
+            if (count > 0) {
+                badge.textContent = count;
+                badge.style.display = 'block';
+            } else {
+                badge.style.display = 'none';
+            }
+            // После изменения статуса непрочитанности сортируем контакты
+            sortContacts();
+        }
+    }
+
+    // Пометка всех сообщений чата как прочитанных
+    async function markChatAsRead(chatId) {
+        try {
+            await fetch('/mark-messages-read', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ chat_id: chatId, message_mids: [] })
+            });
+            updateUnreadBadge(chatId, 0);
+            // После прочтения сортируем контакты
+            sortContacts();
+        } catch (err) {
+            console.error('markChatAsRead error:', err);
+        }
+    }
+
+    // Рендер списка контактов
+    function renderContacts(contacts) {
+        // console.log(contacts)
+        const container = document.getElementById('contacts-list');
+        container.innerHTML = '';
+        contactsMap.clear();
+
+        contacts.forEach(contact => {
+            const chatId = contact.ChatID;
+            const phone = contact.Phone;
+            const userId = contact.UserID;
+            const name = contact.Name || phone;
+            const emc = contact.EMC || '';
+            const avatarUrl = contact.AvatarURL || '';
+
+            // Для иконки показываем EMC если есть, иначе последние 2 цифры телефона
+            const avatarText = emc || (phone ? phone.slice(-2) : userId.toString().slice(-2)).toUpperCase();
+
+            contactsMap.set(chatId, contact);
+
+            const div = document.createElement('div');
+            div.className = 'contact-item';
+            if (currentChatId === chatId) {
+                div.classList.add('active');
+                loadMessages(chatId)
+            }
+            div.setAttribute('data-chat-id', chatId);
+            div.setAttribute('data-user-id', userId);
+
+            // Если есть avatar_url, показываем картинку, иначе текст
+            const avatarHtml = avatarUrl
+                ? `<img src="${escapeHtml(avatarUrl)}" alt="${escapeHtml(name)}" style="width:48px;height:48px;border-radius:50%;object-fit:cover;">`
+                : `<div class="avatar">${avatarText}</div>`;
+
+            div.innerHTML = `
+                ${avatarHtml}
+                <div class="contact-info">
+                    <div class="contact-name">${'ЭМК '+escapeHtml(emc)}</div>
+                    <div class="contact-preview" id="preview-${chatId}">—</div>
+                </div>
+                <div class="contact-time" id="time-${chatId}"></div>
+                <div class="unread-badge" id="unread-${chatId}" style="display: none;">0</div>
+            `;
+            div.addEventListener('click', () => openChat(chatId, userId, phone, name, contact.Birthdate, emc, avatarUrl));
+            container.appendChild(div);
+
+            // Загружаем последнее сообщение для этого чата
+            loadLastMessage(chatId);
+            // Загружаем количество непрочитанных сообщений
+            loadUnreadCount(chatId);
+        });
+
+        // После загрузки всех контактов и их данных сортируем список
+        sortContacts();
+
+        // Если был открыт чат, но его нет в списке — очищаем
+        if (currentChatId && !contactsMap.has(currentChatId)) {
+            closeChat();
+        }
+    }
+
+    // Открыть чат с контактом
+    async function openChat(chatId, userId, phone, name, birthdate, emc, avatarUrl) {
+        currentChatId = chatId;
+        currentUserId = userId;
+
+        // Подсветка активного контакта
+        document.querySelectorAll('.contact-item').forEach(el => {
+            el.classList.remove('active');
+            if (el.getAttribute('data-chat-id') == chatId) el.classList.add('active');
+        });
+
+        // Показать заголовок и поле ввода
+        document.getElementById('chat-header').style.display = 'flex';
+        document.getElementById('input-area').style.display = 'flex';
+
+        // Аватар в хедере
+        const chatAvatarEl = document.getElementById('chat-avatar');
+        if (avatarUrl) {
+            chatAvatarEl.innerHTML = `<img src="${escapeHtml(avatarUrl)}" alt="${escapeHtml(name)}" style="width:48px;height:48px;border-radius:50%;object-fit:cover;">`;
+        } else {
+            const avatarText = emc || (phone ? phone.slice(-2) : userId.toString().slice(-2)).toUpperCase();
+            chatAvatarEl.textContent = avatarText;
+        }
+
+        // Имя, дата рождения и телефон
+
+        const phoneText = phone || `User ID: ${userId}`;
+        const birthdateText = birthdate ? ` • ${birthdate} г.р.` : '';
+        document.getElementById('chat-phone').textContent = phoneText;
+        document.getElementById('chat-name').textContent = `ЭМК ${emc} ${name} ${birthdateText}`;
+
+        // Загрузить историю сообщений
+        await loadMessages(chatId);
+
+        // Пометить все сообщения как прочитанные
+        await markChatAsRead(chatId);
+    }
+
+    // Загрузка сообщений по chat_id
+    async function loadMessages(chatId) {
+        const container = document.getElementById('messages-container');
+        container.innerHTML = '<div class="empty-state">Загрузка...</div>';
+        try {
+            const resp = await fetch(`/get-messages-by-chatid?chat_id=${chatId}`);
+            if (!resp.ok) throw new Error('Network error');
+            const messages = await resp.json();
+            renderMessages(messages);
+        } catch (err) {
+            console.error('loadMessages error:', err);
+            container.innerHTML = '<div class="empty-state">Ошибка загрузки сообщений</div>';
+        }
+    }
+
+    // Рендер сообщений в чате
+    function renderMessages(messages) {
+        messages= Array.from(messages).sort((a, b) => a.timestamp - b.timestamp);
+        const container = document.getElementById('messages-container');
+        if (!messages || messages.length === 0) {
+            container.innerHTML = '<div class="empty-state">Нет сообщений</div>';
+            return;
+        }
+
+        container.innerHTML = '';
+        messages.forEach(msg => {
+            const isOutgoing = msg.sender && msg.sender.user_id === currentUserId; // если отправитель — текущий пользователь? Но обычно сообщения, которые мы отправляем, приходят с user_id бота. Нужно уточнить логику.
+            // Проще: если sender.user_id != bot_id, то incoming, иначе outgoing.
+            // Пока сделаем все сообщения как входящие, а отправленные будем добавлять локально.
+            // В реальности нужно определить bot_id.
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${isOutgoing ? 'outgoing' : 'incoming'}`;
+            messageDiv.setAttribute('data-mid', msg.body.mid || '');
+            messageDiv.innerHTML = `
+                <div>${escapeHtml(msg.body.text || '')}</div>
+                <div class="message-time">${formatTime(msg.timestamp)}</div>
+            `;
+            container.appendChild(messageDiv);
+        });
+        container.scrollTop = container.scrollHeight;
+    }
+
+    // Скролл к сообщению по mid и подсветка
+    function scrollToMessage(mid) {
+        const messageElement = document.querySelector(`[data-mid="${mid}"]`);
+        if (messageElement) {
+            messageElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            messageElement.classList.add('highlighted');
+            // Убираем подсветку через 2 секунды
+            setTimeout(() => {
+                messageElement.classList.remove('highlighted');
+            }, 2000);
+        }
+    }
+
+    // Отправить сообщение
+    async function sendMessage() {
+        const input = document.getElementById('message-input');
+        const text = input.value.trim();
+        if (!text || !currentChatId) return;
+
+        input.disabled = true;
+        try {
+            const resp = await fetch('/send-chat-message', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ chat_id: currentChatId, text: text })
+            });
+            if (resp.ok) {
+                input.value = '';
+                // Сообщение добавится автоматически, когда придёт от MAX через SSE
+            } else {
+                alert('Ошибка отправки');
+            }
+        } catch (err) {
+            alert('Ошибка отправки: ' + err.message);
+        } finally {
+            input.disabled = false;
+            input.focus();
+        }
+    }
+
+    // Обновить последнее сообщение в списке контактов
+    function updateContactPreview(chatId, text, timestamp) {
+        // Проверяем, не старше ли это сообщение, чем уже отображённое
+        const lastTimestamp = lastMessageTimestamps.get(chatId) || 0;
+        if (timestamp < lastTimestamp) {
+            return; // Игнорируем старые сообщения
+        }
+
+        lastMessageTimestamps.set(chatId, timestamp);
+
+        const previewSpan = document.getElementById(`preview-${chatId}`);
+        const timeSpan = document.getElementById(`time-${chatId}`);
+        if (previewSpan) {
+            previewSpan.textContent = text.length > 50 ? text.substring(0, 47) + '...' : text;
+        }
+        if (timeSpan && timestamp) {
+            const date = new Date(timestamp);
+            timeSpan.textContent = formatTime(timestamp);
+        }
+
+        // Сортируем контакты после обновления превью
+        sortContacts();
+    }
+
+    // SSE обработка новых сообщений
+    function connectEventSource() {
+        if (eventSource) eventSource.close();
+        eventSource = new EventSource('/events');
+        // eventSource.onmessage = (event) => {
+        //     try {
+        //         const msg = JSON.parse(event.data);
+        //         const chatId = msg.recipient?.chat_id;
+        //         if (!chatId) return;
+        //
+        //         // Если это сообщение от бота, то оно должно быть отображено в чате, если этот чат открыт
+        //         if (currentChatId === chatId) {
+        //             // Добавляем сообщение в историю (если оно ещё не добавлено)
+        //             const container = document.getElementById('messages-container');
+        //             const messageDiv = document.createElement('div');
+        //             // Определяем, отправитель — бот? Пока считаем все входящие.
+        //             messageDiv.className = 'message incoming';
+        //             messageDiv.innerHTML = `
+        //                 <div>${escapeHtml(msg.body.text || '')}</div>
+        //                 <div class="message-time">${formatTime(msg.timestamp)}</div>
+        //             `;
+        //             container.appendChild(messageDiv);
+        //             container.scrollTop = container.scrollHeight;
+        //         }
+        //         // Обновляем превью в списке контактов
+        //         updateContactPreview(chatId, msg.body.text || '', msg.timestamp);
+        //     } catch (e) {
+        //         console.error('SSE parse error', e);
+        //     }
+        // };
+        eventSource.onmessage = (event) => {
+            if (event.data === "ping") return; // Игнорируем пинги
+
+            try {
+                const payload = JSON.parse(event.data);
+
+                // Обработка событий по типу
+                if (payload.type === 'message') {
+                    handleMessageEvent(payload.data);
+                } else if (payload.type === 'contact_update') {
+                    handleContactUpdateEvent(payload.data);
+                } else {
+                    // Обратная совместимость: если нет type, считаем что это сообщение
+                    handleMessageEvent(payload);
+                }
+            } catch (e) {
+                console.error('SSE parse error', e);
+            }
+        };
+        eventSource.onerror = () => {
+            console.warn('SSE connection lost, reconnecting...');
+            setTimeout(connectEventSource, 3000);
+        };
+    }
+
+    // Обработка события нового сообщения
+    function handleMessageEvent(msg) {
+        // Приводим к числу для надежного сравнения
+        const msgChatId = Number(msg.recipient?.chat_id || msg.sender?.chat_id);
+        const activeChatId = Number(currentChatId);
+
+        // Обновляем превью в списке контактов для всех сообщений
+        updateContactPreview(msgChatId, msg.body.text || '', msg.timestamp);
+
+        // Добавляем сообщение в чат только если этот чат открыт
+        if (msgChatId === activeChatId) {
+            const container = document.getElementById('messages-container');
+
+            const messageDiv = document.createElement('div');
+
+            // Уточняем логику: если sender_id совпадает с текущим контактом - incoming
+            // Если нет (значит отправил бот) - outgoing
+            const isIncoming = msg.sender?.user_id === Number(currentUserId);
+            messageDiv.className = `message ${isIncoming ? 'incoming' : 'outgoing'}`;
+            messageDiv.setAttribute('data-mid', msg.body.mid || '');
+
+            messageDiv.innerHTML = `
+                <div>${escapeHtml(msg.body.text || '')}</div>
+                <div class="message-time">${formatTime(msg.timestamp)}</div>
+            `;
+            container.appendChild(messageDiv);
+            container.scrollTop = container.scrollHeight;
+
+            // Если это входящее сообщение, помечаем как прочитанное
+            if (isIncoming) {
+                markChatAsRead(msgChatId);
+            }
+        } else {
+            // Если чат не открыт, увеличиваем счётчик непрочитанных
+            // Только для входящих сообщений (не от бота)
+            const isIncoming = msg.sender && !msg.sender.is_bot;
+            if (isIncoming) {
+                loadUnreadCount(msgChatId);
+                // После обновления счетчика сортируем контакты
+                sortContacts();
+            }
+        }
+    }
+
+    // Обработка события обновления контакта
+    function handleContactUpdateEvent(contact) {
+        console.log('Contact update received:', contact);
+
+        // Обновляем контакт в Map
+        contactsMap.set(contact.ChatID, contact);
+
+        // Находим элемент контакта в списке
+        const contactElement = document.querySelector(`[data-chat-id="${contact.ChatID}"]`);
+        if (contactElement) {
+            // Обновляем имя
+            const nameElement = contactElement.querySelector('.contact-name');
+            if (nameElement) {
+                nameElement.textContent = contact.Name || contact.Phone || `User ${contact.UserID}`;
+            }
+
+            // Обновляем аватар
+            const avatarElement = contactElement.querySelector('.avatar');
+            if (avatarElement && contact.AvatarURL) {
+                avatarElement.innerHTML = `<img src="${escapeHtml(contact.AvatarURL)}" alt="${escapeHtml(contact.Name || '')}" style="width:48px;height:48px;border-radius:50%;object-fit:cover;">`;
+            }
+        } else {
+            // Контакт новый, перезагружаем весь список
+            loadContacts();
+        }
+    }
+
+    // Сортировка контактов: непрочитанные сверху (от старых к новым), затем прочитанные
+    function sortContacts() {
+        const container = document.getElementById('contacts-list');
+        const items = Array.from(container.querySelectorAll('.contact-item'));
+
+        if (items.length === 0) return;
+
+        // Получаем данные для сортировки для каждого элемента
+        const itemsWithData = items.map(item => {
+            const chatId = Number(item.getAttribute('data-chat-id'));
+            const unreadBadge = document.getElementById(`unread-${chatId}`);
+            const unreadCount = unreadBadge && unreadBadge.style.display !== 'none'
+                ? parseInt(unreadBadge.textContent) || 0
+                : 0;
+            const timestamp = lastMessageTimestamps.get(chatId) || 0;
+
+            return { item, chatId, unreadCount, timestamp };
+        });
+
+        // Сортируем: сначала непрочитанные (от старых к новым), потом прочитанные (от новых к старым)
+        itemsWithData.sort((a, b) => {
+            // Если оба непрочитанные или оба прочитанные - сортируем по времени
+            if ((a.unreadCount > 0 && b.unreadCount > 0) || (a.unreadCount === 0 && b.unreadCount === 0)) {
+                // Для непрочитанных: от старых к новым (ascending)
+                // Для прочитанных: от новых к старым (descending)
+                return a.unreadCount > 0
+                    ? a.timestamp - b.timestamp
+                    : b.timestamp - a.timestamp;
+            }
+            // Непрочитанные всегда выше прочитанных
+            return b.unreadCount - a.unreadCount;
+        });
+
+        // Перемещаем элементы в новом порядке
+        itemsWithData.forEach(({ item }) => {
+            container.appendChild(item);
+        });
+    }
+
+    // Фильтрация контактов по поисковому запросу
+    function filterContacts(searchQuery) {
+        const query = searchQuery.toLowerCase().trim();
+        const contactItems = document.querySelectorAll('.contact-item');
+
+        contactItems.forEach(item => {
+            const chatId = item.getAttribute('data-chat-id');
+            const contact = contactsMap.get(Number(chatId));
+
+            if (!contact) {
+                item.style.display = 'none';
+                return;
+            }
+
+            const name = (contact.Name || '').toLowerCase();
+            const phone = (contact.Phone || '').toLowerCase();
+            const emc = (contact.EMC || '').toLowerCase();
+
+            const matches = query === '' ||
+                           name.includes(query) ||
+                           phone.includes(query) ||
+                           emc.includes(query);
+
+            item.style.display = matches ? 'flex' : 'none';
+        });
+    }
+
+    // Фильтрация контактов по содержимому сообщений
+    async function filterContactsByMessages(searchQuery) {
+        const query = searchQuery.toLowerCase().trim();
+        const contactItems = document.querySelectorAll('.contact-item');
+
+        if (query === '') {
+            // Если поиск пустой, показываем все контакты
+            contactItems.forEach(item => item.style.display = 'flex');
+            return;
+        }
+
+        // Для каждого контакта проверяем, есть ли сообщения с искомым текстом
+        for (const item of contactItems) {
+            const chatId = item.getAttribute('data-chat-id');
+
+            try {
+                const resp = await fetch(`/get-messages-by-chatid?chat_id=${chatId}`);
+                if (!resp.ok) {
+                    item.style.display = 'none';
+                    continue;
+                }
+
+                const messages = await resp.json();
+                const hasMatch = messages.some(msg =>
+                    (msg.body.text || '').toLowerCase().includes(query)
+                );
+
+                item.style.display = hasMatch ? 'flex' : 'none';
+            } catch (err) {
+                console.error('filterContactsByMessages error:', err);
+                item.style.display = 'none';
+            }
+        }
+    }
+
+    function closeChat() {
+        currentChatId = null;
+        currentUserId = null;
+        document.getElementById('chat-header').style.display = 'none';
+        document.getElementById('input-area').style.display = 'none';
+        document.getElementById('messages-container').innerHTML = '<div class="empty-state">Выберите контакт, чтобы начать чат</div>';
+    }
+
+    function escapeHtml(str) {
+        if (!str) return '';
+        return str.replace(/[&<>]/g, function(m) {
+            if (m === '&') return '&amp;';
+            if (m === '<') return '&lt;';
+            if (m === '>') return '&gt;';
+            return m;
+        });
+    }
+
+    // Инициализация
+    document.getElementById('send-button').addEventListener('click', sendMessage);
+    document.getElementById('message-input').addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') sendMessage();
+    });
+
+    // Поиск по контактам
+    document.getElementById('contact-search').addEventListener('input', (e) => {
+        filterContacts(e.target.value);
+        // Очищаем поиск по сообщениям
+        document.getElementById('message-search').value = '';
+    });
+
+    // Поиск по содержимому сообщений
+    document.getElementById('message-search').addEventListener('input', (e) => {
+        filterContactsByMessages(e.target.value);
+        // Очищаем поиск по контактам
+        document.getElementById('contact-search').value = '';
+    });
+
+    loadContacts().then(() => {
+        connectEventSource();
+
+        // Проверяем URL параметры для автоматического открытия чата
+        const urlParams = new URLSearchParams(window.location.search);
+        const chatIdParam = urlParams.get('chat_id');
+        const messageMidParam = urlParams.get('message_mid');
+        if (chatIdParam) {
+            const chatId = Number(chatIdParam);
+            const contact = contactsMap.get(chatId);
+            if (contact) {
+                openChat(
+                    chatId,
+                    contact.UserID,
+                    contact.Phone,
+                    contact.Name || contact.Phone,
+                    contact.Birthdate,
+                    contact.EMC,
+                    contact.AvatarURL
+                );
+                // Если есть message_mid, скроллим к нему после загрузки сообщений
+                if (messageMidParam) {
+                    setTimeout(() => {
+                        scrollToMessage(messageMidParam);
+                        // Очищаем message_mid из URL после скролла
+                        const newUrl = new URL(window.location);
+                        newUrl.searchParams.delete('message_mid');
+                        window.history.replaceState({}, '', newUrl);
+                    }, 500);
+                }
+            }
+        }
+    });
+</script>
+</body>
+</html>
