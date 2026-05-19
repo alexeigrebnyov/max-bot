@@ -15,8 +15,10 @@ CREATE TABLE IF NOT EXISTS reschedule_sessions (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	user_id INTEGER NOT NULL,
 	appointment_id INTEGER NOT NULL,
-	step TEXT NOT NULL DEFAULT 'date', -- date, doctor, time, confirm
-	selected_date TEXT,
+	step TEXT NOT NULL DEFAULT 'week', -- week, day, doctor, time, confirm
+	selected_week TEXT,     -- 'current' или 'next'
+	selected_day TEXT,      -- 'mon', 'tue', 'wed', 'thu', 'fri'
+	selected_date TEXT,     -- полная дата DD.MM.YYYY
 	selected_doctor TEXT,
 	selected_time TEXT,
 	available_doctors TEXT, -- JSON массив
@@ -34,8 +36,10 @@ type RescheduleSession struct {
 	ID               int64
 	UserID           int64
 	AppointmentID    int64
-	Step             string // date, doctor, time, confirm
-	SelectedDate     string // YYYY-MM-DD
+	Step             string // week, day, doctor, time, confirm
+	SelectedWeek     string // 'current' или 'next'
+	SelectedDay      string // 'mon', 'tue', 'wed', 'thu', 'fri'
+	SelectedDate     string // DD.MM.YYYY
 	SelectedDoctor   string
 	SelectedTime     string // HH:MM
 	AvailableDoctors []string
@@ -75,7 +79,7 @@ func (table *RescheduleSessions) Create(userID, appointmentID int64) (int64, err
 func (table *RescheduleSessions) FindByUserID(userID int64) (*RescheduleSession, error) {
 	now := time.Now().Unix()
 	row := table.database.QueryRow(
-		"SELECT id, user_id, appointment_id, step, selected_date, selected_doctor, selected_time, available_doctors, available_times, created_at, expires_at FROM reschedule_sessions WHERE user_id = ? AND expires_at > ? ORDER BY created_at DESC LIMIT 1",
+		"SELECT id, user_id, appointment_id, step, selected_week, selected_day, selected_date, selected_doctor, selected_time, available_doctors, available_times, created_at, expires_at FROM reschedule_sessions WHERE user_id = ? AND expires_at > ? ORDER BY created_at DESC LIMIT 1",
 		userID, now,
 	)
 
@@ -83,7 +87,7 @@ func (table *RescheduleSessions) FindByUserID(userID int64) (*RescheduleSession,
 	var createdAtUnix, expiresAtUnix int64
 	var availableDoctorsJSON, availableTimesJSON sql.NullString
 
-	err := row.Scan(&session.ID, &session.UserID, &session.AppointmentID, &session.Step, &session.SelectedDate, &session.SelectedDoctor, &session.SelectedTime, &availableDoctorsJSON, &availableTimesJSON, &createdAtUnix, &expiresAtUnix)
+	err := row.Scan(&session.ID, &session.UserID, &session.AppointmentID, &session.Step, &session.SelectedWeek, &session.SelectedDay, &session.SelectedDate, &session.SelectedDoctor, &session.SelectedTime, &availableDoctorsJSON, &availableTimesJSON, &createdAtUnix, &expiresAtUnix)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -108,7 +112,25 @@ func (table *RescheduleSessions) FindByUserID(userID int64) (*RescheduleSession,
 	return &session, nil
 }
 
-// UpdateStepDate обновляет шаг и выбранную дату
+// UpdateStepWeek обновляет шаг и выбранную неделю
+func (table *RescheduleSessions) UpdateStepWeek(id int64, week string) error {
+	_, err := table.database.Exec(
+		"UPDATE reschedule_sessions SET step = 'day', selected_week = ? WHERE id = ?",
+		week, id,
+	)
+	return err
+}
+
+// UpdateStepDay обновляет шаг и выбранный день
+func (table *RescheduleSessions) UpdateStepDay(id int64, day string) error {
+	_, err := table.database.Exec(
+		"UPDATE reschedule_sessions SET step = 'doctor', selected_day = ? WHERE id = ?",
+		day, id,
+	)
+	return err
+}
+
+// UpdateStepDate обновляет шаг, выбранную дату и список врачей
 func (table *RescheduleSessions) UpdateStepDate(id int64, date string, doctors []string) error {
 	doctorsJSON, err := json.Marshal(doctors)
 	if err != nil {

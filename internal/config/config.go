@@ -27,6 +27,11 @@ type Config struct {
 	LogLevel           string // debug|info|warn|error (LOG_LEVEL, по умолчанию info)
 	LogFormat          string // json|text (LOG_FORMAT, по умолчанию text)
 	UseLongPolling     bool   // true, если WEBHOOK_URL пустой
+
+	// Эндпоинты бэкенда для управления записями
+	AppointmentCancelEndpoint     string // эндпоинт для отмены записи (POST с appointment_id)
+	AppointmentDoctorsEndpoint    string // эндпоинт для получения врачей по отделению
+	AppointmentBackendAPIKey      string // API ключ для авторизации на бэкенде
 }
 
 func Load() *Config {
@@ -85,6 +90,11 @@ func Load() *Config {
 	}
 
 	cfg.UseLongPolling = cfg.WebhookURL == ""
+
+	// Эндпоинты бэкенда для записей
+	cfg.AppointmentCancelEndpoint = os.Getenv("APPOINTMENT_CANCEL_ENDPOINT")
+	cfg.AppointmentDoctorsEndpoint = os.Getenv("APPOINTMENT_DOCTORS_ENDPOINT")
+	cfg.AppointmentBackendAPIKey = os.Getenv("APPOINTMENT_BACKEND_API_KEY")
 
 	return cfg
 }

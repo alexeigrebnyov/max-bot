@@ -36,18 +36,37 @@ type Service struct {
 	Bot           BotClient
 	webhookSecret string
 	cfg           *config.Config
-	NewMessages chan *Message
-	NewContacts chan *tables.Contact
+	NewMessages   chan *Message
+	NewContacts   chan *tables.Contact
+
+	// Временное хранилище отделений для сессий переноса (sessionID -> department)
+	rescheduleSessionDepartments map[int64]string
 }
 
 func NewService(storage *storage.Service, cfg *config.Config) *Service {
 	return &Service{
-		storage:       storage,
-		cfg:           cfg,
-		webhookSecret: cfg.WebhookSecret,
-		NewMessages:   make(chan *Message, 100),
-		NewContacts:   make(chan *tables.Contact, 100),
+		storage:                      storage,
+		cfg:                          cfg,
+		webhookSecret:                cfg.WebhookSecret,
+		NewMessages:                  make(chan *Message, 100),
+		NewContacts:                  make(chan *tables.Contact, 100),
+		rescheduleSessionDepartments: make(map[int64]string),
 	}
+}
+
+// setRescheduleSessionDepartment сохраняет отделение для сессии переноса
+func (srv *Service) setRescheduleSessionDepartment(sessionID int64, department string) {
+	srv.rescheduleSessionDepartments[sessionID] = department
+}
+
+// getRescheduleSessionDepartment получает отделение для сессии переноса
+func (srv *Service) getRescheduleSessionDepartment(sessionID int64) string {
+	return srv.rescheduleSessionDepartments[sessionID]
+}
+
+// clearRescheduleSessionDepartment удаляет отделение для сессии переноса
+func (srv *Service) clearRescheduleSessionDepartment(sessionID int64) {
+	delete(srv.rescheduleSessionDepartments, sessionID)
 }
 
 // UseLongPolling возвращает true, если обновления получаем через GET /updates (WEBHOOK_URL пустой).
@@ -1977,6 +1996,11 @@ func (srv *Service) handleAppointmentCommand(ctx context.Context, userID int64, 
 			apt.DoctorName,
 			apt.Department)
 	case "/appointment_cancel":
+		// Сначала отправляем запрос на бэкенд для отмены
+		if err := srv.requestBackendCancel(appointmentID); err != nil {
+			log.Printf("handleAppointmentCommand: backend cancel error: %v", err)
+			// Продолжаем выполнение - отменяем локально даже при ошибке бэкенда
+		}
 		status = "cancelled"
 		responseText = "❌ Запись отменена. Для новой записи обратитесь в регистратуру."
 	case "/appointment_reschedule":
@@ -2046,8 +2070,16 @@ func (srv *Service) notifyBackendAppointmentStatus(appointmentID int64, status s
 }
 
 // startRescheduleFlow запускает пошаговый процесс выбора новой даты/врача/времени
-// Шаг 1: Выбор даты
+// Шаг 1: Выбор недели
 func (srv *Service) startRescheduleFlow(ctx context.Context, userID int64, chatKey string, appointmentID int64) {
+	// Получаем запись для определения отделения
+	apt, err := srv.storage.Appointments.FindByID(appointmentID)
+	if err != nil || apt == nil {
+		log.Printf("startRescheduleFlow: appointment not found: %v", err)
+		srv.Bot.SendMessage(ctx, chatKey, 0, "Ошибка: запись не найдена", false)
+		return
+	}
+
 	// Создаем сессию переноса
 	sessionID, err := srv.storage.RescheduleSessions.Create(userID, appointmentID)
 	if err != nil {
@@ -2055,33 +2087,54 @@ func (srv *Service) startRescheduleFlow(ctx context.Context, userID int64, chatK
 		srv.Bot.SendMessage(ctx, chatKey, 0, "Ошибка при создании сессии переноса", false)
 		return
 	}
-	log.Printf("startRescheduleFlow: created session %d for appointment %d", sessionID, appointmentID)
+	log.Printf("startRescheduleFlow: created session %d for appointment %d (department: %s)", sessionID, appointmentID, apt.Department)
 
-	// Генерируем даты на ближайшие 14 дней
-	dates := srv.generateAvailableDates(14)
+	// Сохраняем отделение в контексте сессии для дальнейшего использования
+	srv.setRescheduleSessionDepartment(sessionID, apt.Department)
 
-	// Создаем клавиатуру с датами (2 кнопки в ряд)
-	var buttons [][]KeyboardButton
-	for i := 0; i < len(dates); i += 2 {
-		row := []KeyboardButton{
-			{Type: "message", Text: dates[i], Payload: "/reschedule_date " + dates[i]},
-		}
-		if i+1 < len(dates) {
-			row = append(row, KeyboardButton{Type: "message", Text: dates[i+1], Payload: "/reschedule_date " + dates[i+1]})
-		}
-		buttons = append(buttons, row)
+	// Шаг 1: Выбор недели
+	srv.showWeekSelection(ctx, chatKey, sessionID)
+}
+
+// showWeekSelection показывает кнопки выбора недели
+func (srv *Service) showWeekSelection(ctx context.Context, chatKey string, sessionID int64) {
+	// Формируем названия недель
+	weeks := srv.generateWeekLabels()
+
+	kb := Keyboard{
+		Buttons: [][]KeyboardButton{
+			{{Type: "message", Text: weeks[0], Payload: "/reschedule_week current"}},
+			{{Type: "message", Text: weeks[1], Payload: "/reschedule_week next"}},
+			{{Type: "message", Text: "❌ Отменить перенос", Payload: "/reschedule_cancel"}},
+		},
 	}
-	// Добавляем кнопку отмены
-	buttons = append(buttons, []KeyboardButton{
-		{Type: "message", Text: "❌ Отменить перенос", Payload: "/reschedule_cancel"},
-	})
 
-	kb := Keyboard{Buttons: buttons}
-	text := "🗓 Давайте выберем новую дату приёма:"
-
+	text := "📅 Выберите неделю:"
 	if err := srv.Bot.SendMessageWithKeyboard(ctx, chatKey, text, kb, false); err != nil {
-		log.Printf("startRescheduleFlow: SendMessageWithKeyboard error: %v", err)
+		log.Printf("showWeekSelection: SendMessageWithKeyboard error: %v", err)
 	}
+}
+
+// generateWeekLabels возвращает названия текущей и следующей недель
+func (srv *Service) generateWeekLabels() [2]string {
+	now := time.Now()
+
+	// Находим начало текущей недели (понедельник)
+	weekday := now.Weekday()
+	if weekday == 0 {
+		weekday = 7
+	}
+	monday := now.AddDate(0, 0, -int(weekday)+1)
+	nextMonday := monday.AddDate(0, 0, 7)
+
+	currentWeek := fmt.Sprintf("Текущая (%s - %s)",
+		monday.Format("02.01"),
+		monday.AddDate(0, 0, 4).Format("02.01"))
+	nextWeek := fmt.Sprintf("Следующая (%s - %s)",
+		nextMonday.Format("02.01"),
+		nextMonday.AddDate(0, 0, 4).Format("02.01"))
+
+	return [2]string{currentWeek, nextWeek}
 }
 
 // handleRescheduleStep обрабатывает шаги переноса
@@ -2100,6 +2153,12 @@ func (srv *Service) handleRescheduleStep(ctx context.Context, userID int64, chat
 
 	// Обрабатываем в зависимости от текущего шага и команды
 	switch {
+	case strings.HasPrefix(text, "/reschedule_week "):
+		week := strings.TrimPrefix(text, "/reschedule_week ")
+		srv.handleRescheduleWeek(ctx, chatKey, session, week)
+	case strings.HasPrefix(text, "/reschedule_day "):
+		day := strings.TrimPrefix(text, "/reschedule_day ")
+		srv.handleRescheduleDay(ctx, chatKey, session, day)
 	case strings.HasPrefix(text, "/reschedule_date "):
 		date := strings.TrimPrefix(text, "/reschedule_date ")
 		srv.handleRescheduleDate(ctx, chatKey, session, date)
@@ -2113,14 +2172,23 @@ func (srv *Service) handleRescheduleStep(ctx context.Context, userID int64, chat
 		srv.finalizeReschedule(ctx, userID, chatKey, session)
 	case text == "/reschedule_cancel":
 		srv.storage.RescheduleSessions.Delete(session.ID)
+		srv.clearRescheduleSessionDepartment(session.ID)
 		srv.Bot.SendMessage(ctx, chatKey, 0, "❌ Перенос отменён.", false)
 	case text == "/reschedule_restart":
 		srv.storage.RescheduleSessions.Delete(session.ID)
+		srv.clearRescheduleSessionDepartment(session.ID)
 		srv.startRescheduleFlow(ctx, userID, chatKey, session.AppointmentID)
 	case text == "/reschedule_back_to_date":
 		// Возврат к выбору даты - удаляем сессию и стартуем заново
 		srv.storage.RescheduleSessions.Delete(session.ID)
+		srv.clearRescheduleSessionDepartment(session.ID)
 		srv.startRescheduleFlow(ctx, userID, chatKey, session.AppointmentID)
+	case text == "/reschedule_back_to_week":
+		// Возврат к выбору недели
+		srv.showWeekSelection(ctx, chatKey, session.ID)
+	case text == "/reschedule_back_to_day":
+		// Возврат к выбору дня
+		srv.showDaySelection(ctx, chatKey, session.SelectedWeek)
 	case text == "/reschedule_back_to_doctor":
 		// Возврат к выбору врача - показываем врачей для уже выбранной даты
 		srv.handleRescheduleDate(ctx, chatKey, session, session.SelectedDate)
@@ -2129,10 +2197,121 @@ func (srv *Service) handleRescheduleStep(ctx context.Context, userID int64, chat
 	}
 }
 
-// handleRescheduleDate - Шаг 2: выбор врача после выбора даты
+// handleRescheduleWeek - Шаг 2: выбор дня недели после выбора недели
+func (srv *Service) handleRescheduleWeek(ctx context.Context, chatKey string, session *tables.RescheduleSession, week string) {
+	// Сохраняем выбор недели
+	if err := srv.storage.RescheduleSessions.UpdateStepWeek(session.ID, week); err != nil {
+		log.Printf("handleRescheduleWeek: UpdateStepWeek error: %v", err)
+		srv.Bot.SendMessage(ctx, chatKey, 0, "Ошибка сохранения недели", false)
+		return
+	}
+
+	// Показываем дни недели
+	srv.showDaySelection(ctx, chatKey, week)
+}
+
+// showDaySelection показывает кнопки выбора дня недели
+func (srv *Service) showDaySelection(ctx context.Context, chatKey string, week string) {
+	days := []struct {
+		code string
+		name string
+	}{
+		{"mon", "Пн"},
+		{"tue", "Вт"},
+		{"wed", "Ср"},
+		{"thu", "Чт"},
+		{"fri", "Пт"},
+	}
+
+	// Определяем начало недели
+	now := time.Now()
+	weekday := now.Weekday()
+	if weekday == 0 {
+		weekday = 7
+	}
+	monday := now.AddDate(0, 0, -int(weekday)+1)
+	if week == "next" {
+		monday = monday.AddDate(0, 0, 7)
+	}
+
+	// Формируем кнопки с датами
+	var buttons [][]KeyboardButton
+	for i, day := range days {
+		date := monday.AddDate(0, 0, i)
+		dateStr := date.Format("02.01")
+		buttons = append(buttons, []KeyboardButton{{
+			Type:    "message",
+			Text:    day.name + " " + dateStr,
+			Payload: "/reschedule_day " + day.code + " " + date.Format("02.01.2006"),
+		}})
+	}
+
+	// Добавляем кнопки навигации
+	buttons = append(buttons, []KeyboardButton{
+		{Type: "message", Text: "⬅️ Назад", Payload: "/reschedule_back_to_week"},
+		{Type: "message", Text: "❌ Отмена", Payload: "/reschedule_cancel"},
+	})
+
+	kb := Keyboard{Buttons: buttons}
+	var weekLabel string
+	if week == "current" {
+		weekLabel = "текущую"
+	} else {
+		weekLabel = "следующую"
+	}
+	text := fmt.Sprintf("📅 Вы выбрали %s неделю. Теперь выберите день:", weekLabel)
+
+	if err := srv.Bot.SendMessageWithKeyboard(ctx, chatKey, text, kb, false); err != nil {
+		log.Printf("showDaySelection: SendMessageWithKeyboard error: %v", err)
+	}
+}
+
+// handleRescheduleDay - Шаг 3: переход к выбору врача после выбора дня
+func (srv *Service) handleRescheduleDay(ctx context.Context, chatKey string, session *tables.RescheduleSession, dayPayload string) {
+	// dayPayload содержит "mon 05.01.2026" - день и дата
+	parts := strings.SplitN(dayPayload, " ", 2)
+	if len(parts) < 2 {
+		log.Printf("handleRescheduleDay: invalid day payload: %s", dayPayload)
+		srv.Bot.SendMessage(ctx, chatKey, 0, "Ошибка формата дня", false)
+		return
+	}
+	day := parts[0]
+	date := parts[1]
+
+	// Сохраняем выбор дня и даты
+	if err := srv.storage.RescheduleSessions.UpdateStepDay(session.ID, day); err != nil {
+		log.Printf("handleRescheduleDay: UpdateStepDay error: %v", err)
+		srv.Bot.SendMessage(ctx, chatKey, 0, "Ошибка сохранения дня", false)
+		return
+	}
+
+	// Переходим к выбору врача
+	srv.handleRescheduleDate(ctx, chatKey, session, date)
+}
+
+// handleRescheduleDate - Шаг 4: выбор врача после выбора даты
 func (srv *Service) handleRescheduleDate(ctx context.Context, chatKey string, session *tables.RescheduleSession, date string) {
-	// Получаем список доступных врачей (заглушка - в реальности из БД или API)
-	doctors := srv.getAvailableDoctors(date)
+	// Получаем отделение из сессии
+	department := srv.getRescheduleSessionDepartment(session.ID)
+	if department == "" {
+		// Fallback: получаем отделение из записи
+		apt, err := srv.storage.Appointments.FindByID(session.AppointmentID)
+		if err != nil || apt == nil {
+			log.Printf("handleRescheduleDate: appointment not found: %v", err)
+			srv.Bot.SendMessage(ctx, chatKey, 0, "Ошибка: запись не найдена", false)
+			return
+		}
+		department = apt.Department
+		srv.setRescheduleSessionDepartment(session.ID, department)
+	}
+
+	// Получаем список доступных врачей из бэкенда по отделению
+	doctors, err := srv.requestBackendDoctors(department)
+	if err != nil {
+		log.Printf("handleRescheduleDate: failed to get doctors from backend: %v", err)
+		// Fallback на локальный список
+		doctors = srv.getFallbackDoctors()
+	}
 
 	// Сохраняем выбор и переходим к шагу выбора врача
 	if err := srv.storage.RescheduleSessions.UpdateStepDate(session.ID, date, doctors); err != nil {
@@ -2149,7 +2328,7 @@ func (srv *Service) handleRescheduleDate(ctx context.Context, chatKey string, se
 		})
 	}
 	buttons = append(buttons, []KeyboardButton{
-		{Type: "message", Text: "⬅️ Назад", Payload: "/reschedule_back_to_date"},
+		{Type: "message", Text: "⬅️ Назад", Payload: "/reschedule_back_to_day"},
 		{Type: "message", Text: "❌ Отмена", Payload: "/reschedule_cancel"},
 	})
 
@@ -2159,7 +2338,7 @@ func (srv *Service) handleRescheduleDate(ctx context.Context, chatKey string, se
 	srv.Bot.SendMessageWithKeyboard(ctx, chatKey, text, kb, false)
 }
 
-// handleRescheduleDoctor - Шаг 3: выбор времени после выбора врача
+// handleRescheduleDoctor - Шаг 5: выбор времени после выбора врача
 func (srv *Service) handleRescheduleDoctor(ctx context.Context, chatKey string, session *tables.RescheduleSession, doctor string) {
 	// Получаем доступное время для врача на выбранную дату
 	times := srv.getAvailableTimes(session.SelectedDate, doctor)
@@ -2268,8 +2447,9 @@ func (srv *Service) finalizeReschedule(ctx context.Context, userID int64, chatKe
 		return
 	}
 
-	// Удаляем сессию
+	// Удаляем сессию и очищаем временные данные
 	srv.storage.RescheduleSessions.Delete(session.ID)
+	srv.clearRescheduleSessionDepartment(session.ID)
 
 	// Отправляем подтверждение
 	confirmation := fmt.Sprintf(
@@ -2315,5 +2495,113 @@ func (srv *Service) getAvailableTimes(date, doctor string) []string {
 	return []string{
 		"09:00", "09:30", "10:00", "10:30", "11:00", "11:30",
 		"14:00", "14:30", "15:00", "15:30", "16:00", "16:30",
+	}
+}
+
+// requestBackendCancel отправляет запрос на бэкенд для отмены записи
+func (srv *Service) requestBackendCancel(appointmentID int64) error {
+	endpoint := srv.cfg.AppointmentCancelEndpoint
+	if endpoint == "" {
+		log.Printf("requestBackendCancel: APPOINTMENT_CANCEL_ENDPOINT not set, skipping backend call")
+		return nil
+	}
+
+	payload := map[string]interface{}{
+		"appointment_id": appointmentID,
+		"timestamp":      time.Now().Unix(),
+	}
+
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal cancel payload: %w", err)
+	}
+
+	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(payloadBytes))
+	if err != nil {
+		return fmt.Errorf("failed to create cancel request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	if srv.cfg.AppointmentBackendAPIKey != "" {
+		req.Header.Set("X-API-Key", srv.cfg.AppointmentBackendAPIKey)
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("cancel request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		log.Printf("requestBackendCancel: backend confirmed cancel for appointment %d", appointmentID)
+		return nil
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	return fmt.Errorf("backend returned status %d: %s", resp.StatusCode, string(body))
+}
+
+// requestBackendDoctors запрашивает список врачей отделения у бэкенда
+type doctorsResponse struct {
+	Doctors []string `json:"doctors"`
+}
+
+func (srv *Service) requestBackendDoctors(department string) ([]string, error) {
+	endpoint := srv.cfg.AppointmentDoctorsEndpoint
+	if endpoint == "" {
+		log.Printf("requestBackendDoctors: APPOINTMENT_DOCTORS_ENDPOINT not set, using fallback")
+		return srv.getFallbackDoctors(), nil
+	}
+
+	// Формируем URL с query-параметром department
+	reqURL := endpoint
+	if strings.Contains(reqURL, "?") {
+		reqURL += "&department=" + url.QueryEscape(department)
+	} else {
+		reqURL += "?department=" + url.QueryEscape(department)
+	}
+
+	req, err := http.NewRequest(http.MethodGet, reqURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create doctors request: %w", err)
+	}
+
+	if srv.cfg.AppointmentBackendAPIKey != "" {
+		req.Header.Set("X-API-Key", srv.cfg.AppointmentBackendAPIKey)
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("doctors request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		log.Printf("requestBackendDoctors: backend returned status %d: %s", resp.StatusCode, string(body))
+		return srv.getFallbackDoctors(), nil
+	}
+
+	var result doctorsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode doctors response: %w", err)
+	}
+
+	if len(result.Doctors) == 0 {
+		return srv.getFallbackDoctors(), nil
+	}
+
+	return result.Doctors, nil
+}
+
+// getFallbackDoctors возвращает список врачей по умолчанию при недоступности бэкенда
+func (srv *Service) getFallbackDoctors() []string {
+	return []string{
+		"Петров А.В.",
+		"Сидоров М.Б.",
+		"Кузнецова Е.В.",
+		"Новикова О.П.",
 	}
 }

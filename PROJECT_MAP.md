@@ -312,7 +312,7 @@ CREATE TABLE message_status (
 ---
 
 ### Таблица: `appointments`
-**Файл:** `internal/storage/tables/appointments.go` (новый!)
+**Файл:** `internal/storage/tables/appointments.go`
 
 ```sql
 CREATE TABLE appointments (
@@ -335,6 +335,46 @@ CREATE TABLE appointments (
 - `appointments_chat_id` - по patient_chat_id
 - `appointments_status` - по status
 - `appointments_time` - по appointment_time
+
+---
+
+### Таблица: `reschedule_sessions`
+**Файл:** `internal/storage/tables/reschedule_sessions.go`
+
+Хранит состояние пошагового переноса записи.
+
+```sql
+CREATE TABLE reschedule_sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    appointment_id INTEGER NOT NULL,
+    step TEXT NOT NULL DEFAULT 'week',
+    selected_week TEXT,
+    selected_day TEXT,
+    selected_date TEXT,
+    selected_doctor TEXT,
+    selected_time TEXT,
+    available_doctors TEXT,
+    available_times TEXT,
+    created_at INTEGER DEFAULT (strftime('%s','now')),
+    expires_at INTEGER NOT NULL
+);
+```
+
+**Шаги:** `week` → `day` → `doctor` → `time` → `confirm`
+
+**Индексы:**
+- `reschedule_sessions_user_id` - по user_id
+- `reschedule_sessions_appointment_id` - по appointment_id
+- `reschedule_sessions_expires` - по expires_at
+
+**Flow переноса:**
+1. Пользователь нажимает "Перенести" → создается сессия
+2. Выбор недели (текущая/следующая)
+3. Выбор дня недели (Пн-Пт) с конкретной датой
+4. Выбор врача (список из бэкенда по отделению)
+5. Выбор времени
+6. Подтверждение
 
 ---
 
@@ -501,6 +541,16 @@ SELECT * FROM message_status;
 
 ## Changelog
 
+### 2026-05-07
+- **Интеграция с бэкендом для записей**
+  - Таблица `reschedule_sessions` для пошагового переноса записи
+  - Переменные окружения для интеграции:
+    - `APPOINTMENT_CANCEL_ENDPOINT` - POST-запрос для отмены записи
+    - `APPOINTMENT_DOCTORS_ENDPOINT` - GET-запрос для получения врачей по отделению
+    - `APPOINTMENT_BACKEND_API_KEY` - API ключ для авторизации
+  - Многоэтапный flow переноса: неделя → день → врач → время → подтверждение
+  - Методы: `requestBackendCancel()`, `requestBackendDoctors()`
+
 ### 2026-05-04
 - **Новый функционал: Записи на приём к врачу**
   - Таблица `appointments` для хранения записей
@@ -510,9 +560,6 @@ SELECT * FROM message_status;
   - Обработка команд: `/appointment_confirm|cancel|reschedule <id>`
   - Уведомление бэкенда через переменную `APPOINTMENT_BACKEND_URL`
   - Экспорт типов `Keyboard`, `KeyboardButton` из `internal/bot/model.go`
-- Обновлена документация README.md (API эндпоинты)
-- Добавлен `/all-contacts` - список всех контактов
-- Уточнен порт по умолчанию: 9003
 - Обновлена документация README.md (API эндпоинты)
 - Добавлен `/all-contacts` - список всех контактов
 - Уточнен порт по умолчанию: 9003
