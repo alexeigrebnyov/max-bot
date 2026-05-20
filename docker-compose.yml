@@ -13,6 +13,6 @@ services:
       - MAX_API_BASE_URL=${MAX_API_BASE_URL:-}
       - API_BASE_URL=${API_BASE_URL:-}
     volumes:
-      - ./data:/data                      # SQLite-хранилище контактов
+      - ./data:/app/data                  # SQLite-хранилище контактов (бот пишет в /app/data/storage.db)
     ports:
       - "9003:9003"                       # HTTP API и /webhook

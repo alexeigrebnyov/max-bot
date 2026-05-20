@@ -905,6 +905,27 @@ func (srv *Service) handleMessageCreated(ctx context.Context, raw json.RawMessag
 		return
 	}
 
+	// MAX отправляет ТЕКСТ кнопки, а не payload — мапим текст на команду
+	buttonToCommand := map[string]string{
+		"🗓 Перенести": "/appointment_reschedule",
+		"✅ Приду":     "/appointment_confirm",
+		"❌ Отменить":  "/appointment_cancel",
+	}
+	if cmd, ok := buttonToCommand[trimmedText]; ok {
+		apt, err := srv.storage.Appointments.GetLastPendingByChatID(chat)
+		if err != nil {
+			log.Printf("handleMessageCreated: GetLastPendingByChatID error: %v", err)
+			return
+		}
+		if apt == nil {
+			log.Printf("handleMessageCreated: no pending appointment for chat=%d, button=%q", chat, trimmedText)
+			return
+		}
+		cmdText := cmd + " " + strconv.FormatInt(apt.ID, 10)
+		srv.handleAppointmentCommand(ctx, userID, chatKey, cmdText)
+		return
+	}
+
 	// Обработка команд записи на приём к врачу
 	if strings.HasPrefix(trimmedText, "/appointment_confirm") ||
 		strings.HasPrefix(trimmedText, "/appointment_cancel") ||
@@ -2110,8 +2131,13 @@ func (srv *Service) showWeekSelection(ctx context.Context, chatKey string, sessi
 	}
 
 	text := "📅 Выберите неделю:"
-	if err := srv.Bot.SendMessageWithKeyboard(ctx, chatKey, text, kb, false); err != nil {
-		log.Printf("showWeekSelection: SendMessageWithKeyboard error: %v", err)
+	chatID, err := strconv.ParseInt(chatKey, 10, 64)
+	if err != nil {
+		log.Printf("showWeekSelection: invalid chatKey %q: %v", chatKey, err)
+		return
+	}
+	if err := srv.Bot.SendToChatByIDWithKeyboard(ctx, chatID, text, kb); err != nil {
+		log.Printf("showWeekSelection: SendToChatByIDWithKeyboard error: %v", err)
 	}
 }
 
@@ -2261,8 +2287,13 @@ func (srv *Service) showDaySelection(ctx context.Context, chatKey string, week s
 	}
 	text := fmt.Sprintf("📅 Вы выбрали %s неделю. Теперь выберите день:", weekLabel)
 
-	if err := srv.Bot.SendMessageWithKeyboard(ctx, chatKey, text, kb, false); err != nil {
-		log.Printf("showDaySelection: SendMessageWithKeyboard error: %v", err)
+	chatID, err := strconv.ParseInt(chatKey, 10, 64)
+	if err != nil {
+		log.Printf("showDaySelection: invalid chatKey %q: %v", chatKey, err)
+		return
+	}
+	if err := srv.Bot.SendToChatByIDWithKeyboard(ctx, chatID, text, kb); err != nil {
+		log.Printf("showDaySelection: SendToChatByIDWithKeyboard error: %v", err)
 	}
 }
 
@@ -2335,7 +2366,14 @@ func (srv *Service) handleRescheduleDate(ctx context.Context, chatKey string, se
 	kb := Keyboard{Buttons: buttons}
 	text := "📅 Вы выбрали: " + date + "\nТеперь выберите врача:"
 
-	srv.Bot.SendMessageWithKeyboard(ctx, chatKey, text, kb, false)
+	chatID, err := strconv.ParseInt(chatKey, 10, 64)
+	if err != nil {
+		log.Printf("handleRescheduleDay: invalid chatKey %q: %v", chatKey, err)
+		return
+	}
+	if err := srv.Bot.SendToChatByIDWithKeyboard(ctx, chatID, text, kb); err != nil {
+		log.Printf("handleRescheduleDay: SendToChatByIDWithKeyboard error: %v", err)
+	}
 }
 
 // handleRescheduleDoctor - Шаг 5: выбор времени после выбора врача
@@ -2371,7 +2409,14 @@ func (srv *Service) handleRescheduleDoctor(ctx context.Context, chatKey string, 
 	kb := Keyboard{Buttons: buttons}
 	text := "👨‍⚕️ Вы выбрали: " + doctor + "\nТеперь выберите время:"
 
-	srv.Bot.SendMessageWithKeyboard(ctx, chatKey, text, kb, false)
+	chatID, err := strconv.ParseInt(chatKey, 10, 64)
+	if err != nil {
+		log.Printf("handleRescheduleDoctor: invalid chatKey %q: %v", chatKey, err)
+		return
+	}
+	if err := srv.Bot.SendToChatByIDWithKeyboard(ctx, chatID, text, kb); err != nil {
+		log.Printf("handleRescheduleDoctor: SendToChatByIDWithKeyboard error: %v", err)
+	}
 }
 
 // handleRescheduleTime - Шаг 4: подтверждение после выбора времени
@@ -2406,7 +2451,14 @@ func (srv *Service) handleRescheduleTime(ctx context.Context, userID int64, chat
 		},
 	}
 
-	srv.Bot.SendMessageWithKeyboard(ctx, chatKey, confirmationText, kb, false)
+	chatID, err := strconv.ParseInt(chatKey, 10, 64)
+	if err != nil {
+		log.Printf("handleRescheduleTime: invalid chatKey %q: %v", chatKey, err)
+		return
+	}
+	if err := srv.Bot.SendToChatByIDWithKeyboard(ctx, chatID, confirmationText, kb); err != nil {
+		log.Printf("handleRescheduleTime: SendToChatByIDWithKeyboard error: %v", err)
+	}
 }
 
 // finalizeReschedule - Финальный шаг: сохранение переноса

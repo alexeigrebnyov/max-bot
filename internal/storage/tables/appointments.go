@@ -188,3 +188,36 @@ func (table *Appointments) ListByChatID(chatID int64) ([]*Appointment, error) {
 	return appointments, rows.Err()
 }
 
+// GetLastPendingByChatID находит последнюю ожидающую запись пациента по chat_id.
+// Используется при обработке нажатий кнопок MAX (Перенести/Приду/Отменить),
+// когда payload не доходит и приходится опираться на текст кнопки + контекст чата.
+func (table *Appointments) GetLastPendingByChatID(chatID int64) (*Appointment, error) {
+	row := table.database.QueryRow(
+		"SELECT id, patient_chat_id, patient_name, appointment_time, doctor_name, department, status, reminder_sent, created_at, updated_at FROM appointments WHERE patient_chat_id = ? AND status = 'pending' ORDER BY created_at DESC LIMIT 1",
+		chatID,
+	)
+
+	var apt Appointment
+	var aptTimeUnix, createdAtUnix int64
+	var updatedAtUnix sql.NullInt64
+	var reminderSent int
+
+	err := row.Scan(&apt.ID, &apt.PatientChatID, &apt.PatientName, &aptTimeUnix, &apt.DoctorName, &apt.Department, &apt.Status, &reminderSent, &createdAtUnix, &updatedAtUnix)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("appointments.GetLastPendingByChatID(chat=%d): %w", chatID, err)
+	}
+
+	apt.AppointmentTime = time.Unix(aptTimeUnix, 0)
+	apt.CreatedAt = time.Unix(createdAtUnix, 0)
+	apt.ReminderSent = reminderSent == 1
+	if updatedAtUnix.Valid {
+		t := time.Unix(updatedAtUnix.Int64, 0)
+		apt.UpdatedAt = &t
+	}
+
+	return &apt, nil
+}
+
