@@ -541,6 +541,20 @@ SELECT * FROM message_status;
 
 ## Changelog
 
+### 2026-05-20
+- **Фикс reschedule flow и кнопок MAX**
+  - `internal/bot/service.go`: восстановлен `buttonToCommand` mapping в `handleMessageCreated`
+    (MAX отправляет текст кнопки, не payload). Через `Appointments.GetLastPendingByChatID(chat)`
+    находим последнюю pending запись и формируем команду `/appointment_<action> <id>`.
+  - `internal/bot/service.go`: 5 точек reschedule flow (`showWeekSelection`, `showDaySelection`,
+    `handleRescheduleDay`, `handleRescheduleDoctor`, `handleRescheduleTime`) переведены
+    с `SendMessageWithKeyboard` (`dialog.not.found` на user_id) на `SendToChatByIDWithKeyboard`
+    с явным парсингом `chatKey` → int64 `chatID`.
+  - `internal/storage/tables/appointments.go`: добавлен метод `GetLastPendingByChatID(chatID int64)`
+    для поиска последней pending записи по chat_id.
+  - `docker-compose.yml`: исправлен volume mount с `./data:/data` на `./data:/app/data`
+    (бот пишет в `/app/data/storage.db`; со старым mount данные терялись при пересборке).
+
 ### 2026-05-07
 - **Интеграция с бэкендом для записей**
   - Таблица `reschedule_sessions` для пошагового переноса записи
